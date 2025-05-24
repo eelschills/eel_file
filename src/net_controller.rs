@@ -1,14 +1,14 @@
+use eel_file::AppState;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::{mpsc, watch};
 use tokio::sync::watch::{Receiver, Sender};
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
-use eel_file::AppState;
 
 pub struct NetController {
     runtime: Option<Runtime>,
@@ -18,7 +18,7 @@ pub struct NetController {
 
 pub enum NetCommand {
     Send,
-    Receive
+    Receive,
 }
 
 impl NetController {
@@ -43,17 +43,24 @@ impl NetController {
         match cmd {
             NetCommand::Send => {
                 println!("Attempting to send a message");
-                let futures_rewritten = self.runtime.as_ref().unwrap().spawn(Self::send(tx, shutdown_rx));
+                let futures_rewritten = self
+                    .runtime
+                    .as_ref()
+                    .unwrap()
+                    .spawn(Self::send(tx, shutdown_rx));
                 self.worker = Some(futures_rewritten);
                 Some(rx)
             }
             NetCommand::Receive => {
-                let futures_rewritten = self.runtime.as_ref().unwrap().spawn(Self::listen(tx, shutdown_rx));
+                let futures_rewritten = self
+                    .runtime
+                    .as_ref()
+                    .unwrap()
+                    .spawn(Self::listen(tx, shutdown_rx));
                 self.worker = Some(futures_rewritten);
                 Some(rx)
             }
         }
-
     }
 
     async fn listen(tx: UnboundedSender<AppState>, mut shutdown: Receiver<bool>) {
@@ -100,9 +107,21 @@ impl NetController {
         }
     }
 
-    async fn send(tx: UnboundedSender<AppState>, shutdown_r: Receiver<bool>) {
-        println!("sneeding");
-        sleep(Duration::from_secs(5)).await;
-        println!("done!");
+    async fn send(tx: UnboundedSender<AppState>, mut shutdown_r: Receiver<bool>) {
+        tokio::select! {
+        _ = shutdown_r.changed() => {
+            let tx = tx.clone();
+            let _ = tx.send(AppState::Idle);
+            println!("shutdown received");
+        }
+
+        _ = async {
+            println!("sneeding");
+            sleep(Duration::from_secs(5)).await;
+            println!("done!");
+            } => {
+                println!("done sneeding");
+            }
+        }
     }
 }

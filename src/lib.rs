@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::path::PathBuf;
 
-
 pub enum AppState {
     Idle,
     Listening,
@@ -29,7 +28,7 @@ pub struct FileInfo {
     hash: String,
     handle: Option<File>,
     name: String,
-    format: String
+    format: String,
 }
 
 impl Default for FileInfo {

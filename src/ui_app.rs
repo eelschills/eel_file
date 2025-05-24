@@ -1,16 +1,17 @@
-use crate::controller::{ Controller};
-use crate::eel_error::EelError;
+use crate::controller::Controller;
+use eel_file::AppState;
 use eframe::egui;
 use eframe::egui::{Ui, ViewportCommand};
 use rfd::FileDialog;
 use std::net::IpAddr;
+use std::ops::Deref;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use eel_file::{AppState, FileInfo};
 
 pub struct UiApp {
     controller: Controller,
-    ui_state: AppState,
+    app_state: Arc<Mutex<AppState>>,
     selected_file_str: String,
     selected_file_path: Option<PathBuf>,
     receive_ip: Option<IpAddr>,
@@ -28,7 +29,6 @@ pub struct UiApp {
 impl eframe::App for UiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-
             // handle user clicking X
             if ctx.input(|i| i.viewport().close_requested()) {
                 if !self.allowed_to_close {
@@ -69,10 +69,10 @@ impl eframe::App for UiApp {
 }
 
 impl UiApp {
-    pub fn new(controller: Controller) -> Self {
+    pub fn new(controller: Controller, app_state: Arc<Mutex<AppState>>) -> Self {
         Self {
             controller,
-            ui_state: AppState::Idle,
+            app_state,
             selected_file_path: None,
             selected_file_str: String::new(),
             receive_ip: None,
@@ -117,7 +117,10 @@ impl UiApp {
             ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
         }
 
-        let fmt_path = format!("DEBUG: Current app state: {}", self.ui_state);
+        let fmt_path = format!(
+            "DEBUG: Current app state: {}",
+            self.app_state.lock().unwrap()
+        );
         ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
 
         ui.horizontal(|ui| {
@@ -146,7 +149,6 @@ impl UiApp {
         ui.add_space(0.5);
         if ui.button("SNEED").clicked() {
             // testing file info
-            self.ui_state = AppState::Sending(FileInfo::default());
             self.controller.send();
         }
     }
@@ -158,11 +160,18 @@ impl UiApp {
             ui.vertical(|ui| {
                 ui.label("Port");
 
-                match self.ui_state {
-                    AppState::Idle | AppState::Listening => { ui.add(
-                        egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0), // Make it narrower
-                    ); }
-                    _ => { ui.add_enabled(false, egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0)); }
+                match self.app_state.lock().unwrap().deref() {
+                    AppState::Idle | AppState::Listening => {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0), // Make it narrower
+                        );
+                    }
+                    _ => {
+                        ui.add_enabled(
+                            false,
+                            egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0),
+                        );
+                    }
                 }
             });
 
@@ -178,7 +187,6 @@ impl UiApp {
         if ui.button("LISTEN").clicked() {
             // todo: ask for result before swapping state
             self.controller.listen();
-            self.ui_state = AppState::Listening;
         }
     }
 
