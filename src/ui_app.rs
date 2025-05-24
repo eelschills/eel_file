@@ -1,33 +1,80 @@
-use crate::app_state::AppState;
+use crate::controller::{ Controller};
+use crate::eel_error::EelError;
 use eframe::egui;
+use eframe::egui::{Ui, ViewportCommand};
 use rfd::FileDialog;
 use std::net::IpAddr;
 use std::path::PathBuf;
-use eframe::egui::Ui;
+use std::time::Duration;
+use eel_file::{AppState, FileInfo};
 
 pub struct UiApp {
-    current_state: AppState,
-    current_ui_state: UiState,
+    controller: Controller,
+    ui_state: AppState,
     selected_file_str: String,
     selected_file_path: Option<PathBuf>,
-    send_ip: Option<IpAddr>,
     receive_ip: Option<IpAddr>,
     send_ip_str: String,
     receive_ip_str: String,
     password: String,
     port_send: String,
     port_recv: String,
-    progress: f32
+    progress: f32,
+    message: String,
+    shutting_down: bool,
+    allowed_to_close: bool,
 }
 
-impl Default for UiApp {
-    fn default() -> Self {
+impl eframe::App for UiApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+
+            // handle user clicking X
+            if ctx.input(|i| i.viewport().close_requested()) {
+                if !self.allowed_to_close {
+                    ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                    self.shutting_down = true;
+                }
+            }
+
+            if self.shutting_down {
+                egui::Window::new("Do you want to quit?")
+                    .collapsible(false)
+                    .resizable(false)
+                    .fixed_size([3000.0, 1000.0])
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("No").clicked() {
+                                self.shutting_down = false;
+                            }
+
+                            if ui.button("Yes").clicked() {
+                                self.shutting_down = false;
+                                self.allowed_to_close = true;
+                                ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                            }
+                        });
+                    });
+            }
+
+            self.draw_sender_ui(ui);
+            ui.separator();
+            self.draw_receiver_ui(ui);
+            ui.separator();
+            self.draw_status_ui(ui);
+            ui.allocate_space(ui.available_size());
+            ctx.request_repaint_after(Duration::from_secs(1));
+        });
+    }
+}
+
+impl UiApp {
+    pub fn new(controller: Controller) -> Self {
         Self {
-            current_state: AppState::new(),
-            current_ui_state: UiState::Idle,
+            controller,
+            ui_state: AppState::Idle,
             selected_file_path: None,
             selected_file_str: String::new(),
-            send_ip: None,
             receive_ip: None,
             send_ip_str: String::new(),
             receive_ip_str: String::new(),
@@ -35,32 +82,12 @@ impl Default for UiApp {
             port_send: String::new(),
             port_recv: String::new(),
             progress: 0.0,
+            message: String::new(),
+            shutting_down: false,
+            allowed_to_close: false,
         }
     }
-}
 
-enum UiState {
-    Idle,
-    Listening,
-    Accepting,
-    Sending,
-    LeChatting
-}
-
-impl eframe::App for UiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_sender_ui(ui);
-            ui.separator();
-            self.draw_receiver_ui(ui);
-            ui.separator();
-            self.draw_status_ui(ui);
-            ui.allocate_space(ui.available_size());
-        });
-    }
-}
-
-impl UiApp {
     fn draw_sender_ui(&mut self, ui: &mut Ui) {
         ui.heading("Send a file");
 
@@ -90,6 +117,9 @@ impl UiApp {
             ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
         }
 
+        let fmt_path = format!("DEBUG: Current app state: {}", self.ui_state);
+        ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
+
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label("Target IP:");
@@ -115,7 +145,9 @@ impl UiApp {
 
         ui.add_space(0.5);
         if ui.button("SNEED").clicked() {
-            self.current_ui_state = UiState::Idle;
+            // testing file info
+            self.ui_state = AppState::Sending(FileInfo::default());
+            self.controller.send();
         }
     }
 
@@ -125,9 +157,13 @@ impl UiApp {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label("Port");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0), // Make it narrower
-                );
+
+                match self.ui_state {
+                    AppState::Idle | AppState::Listening => { ui.add(
+                        egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0), // Make it narrower
+                    ); }
+                    _ => { ui.add_enabled(false, egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0)); }
+                }
             });
 
             ui.add_space(0.5);
@@ -140,7 +176,9 @@ impl UiApp {
 
         ui.add_space(0.5);
         if ui.button("LISTEN").clicked() {
-            // todo
+            // todo: ask for result before swapping state
+            self.controller.listen();
+            self.ui_state = AppState::Listening;
         }
     }
 
@@ -148,6 +186,19 @@ impl UiApp {
         ui.heading("Status");
 
         ui.label("File metadata: N/A");
+
+        /* if let AppState::Listening = self.ui_state {
+            match self.controller.poll() {
+                Ok(appstate) => self.message = msg,
+                Err(EelError::Poll(_)) => {
+                    panic!("Trying to poll a non-existing worker!")
+                }
+                // this can only be empty stream, do nothing
+                Err(msg) => {}
+            }
+
+            ui.label(format!("Received message: {}", self.message));
+        } */
 
         ui.add(egui::ProgressBar::new(self.progress));
 
