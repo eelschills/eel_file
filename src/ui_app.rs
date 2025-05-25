@@ -146,18 +146,10 @@ impl UiApp {
             });
         });
         ui.add_space(0.5);
-        ui.horizontal(|ui| {
-            if ui.button("SNEED").clicked() {
-                // testing file info
-                self.controller.send();
-            }
-
-            ui.add_space(1.0);
-            if ui.button("ABORT").clicked() {
-                // testing file info
-                self.controller.abort();
-            }
-        });
+        if ui.button("SNEED").clicked() {
+            // testing file info
+            self.controller.send();
+        }
     }
 
     fn draw_receiver_ui(&mut self, ui: &mut Ui) {

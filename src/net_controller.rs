@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{remove_file, File};
 use std::io::{BufWriter, Seek, Write};
 use eel_file::AppState;
 use std::net::SocketAddr;
@@ -74,6 +74,7 @@ impl NetController {
                 },
 
                 Ok((stream, addr)) = listener.accept() => {
+                    let _ = tx.send(AppState::Accepting(0.0));
                     // if in the future I want to listen to new connections and tell them to fuck off, this is where I'd do it
                     let shutdown_rx = shutdown.clone();
                     Self::handle_rx_stream(stream, addr, shutdown_rx).await;
@@ -87,35 +88,7 @@ impl NetController {
         addr: SocketAddr,
         mut shutdown_signal: Receiver<bool>,
     ) {
-        let mut reader = BufReader::new(&mut stream);
-        let mut lines = reader.lines();
-        let mut payload = Vec::new();
-        println!("Inside handle stream!");
-
-        loop {
-            tokio::select! {
-                _ = shutdown_signal.changed() => {
-                    println!("Supposed to be shutting down");
-                    return;
-                }
-
-                line = lines.next_line() => {
-                    println!("Reading lines!");
-                    match line {
-
-                    Ok(Some(line)) => {
-                        if line.is_empty() {
-                            break;
-                        }
-                        payload.push(line);
-                    }
-                    _ => { break; }
-                    }
-                }
-            }
-        }
-
-        println!("Outside stream handling!");
+        println!("Handling request...");
         let response = r#"{"message":"Hello, Eels!"}"#;
         let resp = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
@@ -125,11 +98,16 @@ impl NetController {
         stream.write_all(resp.as_bytes()).await.unwrap();
         stream.flush().await.unwrap();
 
-        let mut file = File::open("lollmao.txt");
+        let file = File::create("lollmao.txt");
 
         match file {
             Ok(mut file) => {
                 for i in 1..10000 {
+                    if shutdown_signal.has_changed().unwrap_or(false) {
+                        println!("Shutting down?");
+                        let _ = shutdown_signal.borrow_and_update();
+                        remove_file("lollmao.txt").expect("Could not delete file!");
+                    }
                     file.write_all(i.to_string().as_bytes()).expect("Write failed!");
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
