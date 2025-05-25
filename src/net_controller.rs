@@ -1,8 +1,10 @@
+use std::fs::File;
+use std::io::{BufWriter, Seek, Write};
 use eel_file::AppState;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch::{Receiver, Sender};
@@ -13,7 +15,6 @@ use tokio::time::sleep;
 pub struct NetController {
     runtime: Option<Runtime>,
     worker: Option<JoinHandle<()>>,
-    shutdown_tx: Option<Sender<bool>>,
 }
 
 pub enum NetCommand {
@@ -23,22 +24,18 @@ pub enum NetCommand {
 
 impl NetController {
     pub fn new() -> NetController {
+        let rt = Builder::new_multi_thread().enable_all().build().unwrap();
+
         NetController {
-            runtime: None,
+            runtime: Some(rt),
             worker: None,
-            shutdown_tx: None,
         }
     }
 
-    pub fn start(&mut self, _port: usize, cmd: NetCommand) -> Option<UnboundedReceiver<AppState>> {
+    pub fn start(&mut self, _port: usize, cmd: NetCommand) -> (UnboundedReceiver<AppState>, Sender<bool>) {
         let (tx, rx) = mpsc::unbounded_channel();
 
-        let rt = Builder::new_multi_thread().enable_all().build().unwrap();
-        self.runtime = Some(rt);
-
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-        self.shutdown_tx = Some(shutdown_tx);
 
         match cmd {
             NetCommand::Send => {
@@ -49,7 +46,7 @@ impl NetController {
                     .unwrap()
                     .spawn(Self::send(tx, shutdown_rx));
                 self.worker = Some(futures_rewritten);
-                Some(rx)
+                (rx, shutdown_tx)
             }
             NetCommand::Receive => {
                 let futures_rewritten = self
@@ -58,7 +55,7 @@ impl NetController {
                     .unwrap()
                     .spawn(Self::listen(tx, shutdown_rx));
                 self.worker = Some(futures_rewritten);
-                Some(rx)
+                (rx, shutdown_tx)
             }
         }
     }
@@ -71,39 +68,73 @@ impl NetController {
 
         loop {
             tokio::select! {
+                _ = shutdown.changed() => {
+                    println!("Supposed to be shutting down");
+                    break;
+                },
 
-            _ = shutdown.changed() => {
-                    let tx = tx.clone();
-                    let _ = tx.send(AppState::Idle);
-                println!("shutdown received");
-                break;
-            }
-
-            Ok((mut stream, addr)) = listener.accept() => {
-               let tx = tx.clone();
-               tokio::spawn(async move {
-                   let mut reader = BufReader::new(&mut stream);
-                   let mut lines = reader.lines();
-                   let mut payload = Vec::new();
-
-                   while let Ok(Some(line)) = lines.next_line().await {
-                       if line.is_empty() {
-                           break;
-                       }
-                       payload.push(line);
-                   }
-
-                   let _ = tx.send(AppState::Accepting(0.0));
-
-                   let body = r#"{"message":"Hello, Eels!"}"#;
-                   let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                   body.len(), body);
-                   stream.write_all(response.as_bytes()).await.expect("Fug");
-                   stream.flush().await.expect("Fug");
-                   }
-            );
+                Ok((stream, addr)) = listener.accept() => {
+                    // if in the future I want to listen to new connections and tell them to fuck off, this is where I'd do it
+                    let shutdown_rx = shutdown.clone();
+                    Self::handle_rx_stream(stream, addr, shutdown_rx).await;
                 }
             }
+        }
+    }
+
+    async fn handle_rx_stream(
+        mut stream: TcpStream,
+        addr: SocketAddr,
+        mut shutdown_signal: Receiver<bool>,
+    ) {
+        let mut reader = BufReader::new(&mut stream);
+        let mut lines = reader.lines();
+        let mut payload = Vec::new();
+        println!("Inside handle stream!");
+
+        loop {
+            tokio::select! {
+                _ = shutdown_signal.changed() => {
+                    println!("Supposed to be shutting down");
+                    return;
+                }
+
+                line = lines.next_line() => {
+                    println!("Reading lines!");
+                    match line {
+
+                    Ok(Some(line)) => {
+                        if line.is_empty() {
+                            break;
+                        }
+                        payload.push(line);
+                    }
+                    _ => { break; }
+                    }
+                }
+            }
+        }
+
+        println!("Outside stream handling!");
+        let response = r#"{"message":"Hello, Eels!"}"#;
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+            response.len(),
+            response
+        );
+        stream.write_all(resp.as_bytes()).await.unwrap();
+        stream.flush().await.unwrap();
+
+        let mut file = File::open("lollmao.txt");
+
+        match file {
+            Ok(mut file) => {
+                for i in 1..10000 {
+                    file.write_all(i.to_string().as_bytes()).expect("Write failed!");
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                }
+            }
+            Err(e) => { println!("File creation failed! Reason {}", e) }
         }
     }
 

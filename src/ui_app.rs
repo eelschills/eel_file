@@ -145,12 +145,19 @@ impl UiApp {
                 ui.text_edit_singleline(&mut self.password);
             });
         });
-
         ui.add_space(0.5);
-        if ui.button("SNEED").clicked() {
-            // testing file info
-            self.controller.send();
-        }
+        ui.horizontal(|ui| {
+            if ui.button("SNEED").clicked() {
+                // testing file info
+                self.controller.send();
+            }
+
+            ui.add_space(1.0);
+            if ui.button("ABORT").clicked() {
+                // testing file info
+                self.controller.abort();
+            }
+        });
     }
 
     fn draw_receiver_ui(&mut self, ui: &mut Ui) {
