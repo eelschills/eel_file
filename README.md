@@ -8,6 +8,6 @@ DOWNLOAD EELFILE, WRITTEN 100% IN RUST
 
 ![image](https://github.com/user-attachments/assets/f62a03df-ba10-4f9f-9f2e-dce2f1f33a00)
 
-\* TLS support planned eventually
+\* Noise support planned eventually
 
 *Disclaimer: does not actually function yet*
