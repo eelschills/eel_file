@@ -1,9 +1,9 @@
+use eel_file::{AppState, FileInfo};
 use std::fs::{remove_file, File};
-use std::io::{BufWriter, Seek, Write};
-use eel_file::AppState;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -78,6 +78,7 @@ impl NetController {
                     // if in the future I want to listen to new connections and tell them to fuck off, this is where I'd do it
                     let shutdown_rx = shutdown.clone();
                     Self::handle_rx_stream(stream, addr, shutdown_rx).await;
+                    let _ = tx.send(AppState::Listening);
                 }
             }
         }
@@ -126,10 +127,11 @@ impl NetController {
 
         _ = async {
             println!("sneeding");
+            let _ = tx.send(AppState::Sending(FileInfo::default()));
             sleep(Duration::from_secs(5)).await;
             println!("done!");
             } => {
-                println!("done sneeding");
+                let _ = tx.send(AppState::Idle).unwrap();
             }
         }
     }

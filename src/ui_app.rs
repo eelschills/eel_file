@@ -215,8 +215,10 @@ impl UiApp {
         ui.horizontal(|ui| {
             ui.label(format!("Progress: {}%", (self.progress * 100.0).round()));
             if ui.button("SOTP").clicked() {
-                println!("SOTP");
+                self.controller.abort();
             }
         });
+        
+        
     }
 }
