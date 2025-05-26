@@ -42,10 +42,14 @@ impl Controller {
         self.shutdown_tx = Some(shutdown_tx);
         self.listen_to_state(task_receiver);
     }
-
+    
     pub fn abort(&mut self) {
-        // todo: implement actually aborting a task through a shutdown signal
-        self.shutdown_tx.as_mut().unwrap().send(true).expect("Shutdown failed");
+        // todo: current bug: if a task successfully resolves, there is still a Some() listener inside the struct.
+        // that means the program just crashes if I press abort again. So it needs to be removed from the watcher, but I gotta think as to how
+        // I'll have to do it tomorrow
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            shutdown_tx.send(true).expect("Shutdown failed");
+        }
         
         let mut app_state = self.app_state.lock().unwrap();
         *app_state = AppState::Idle;
@@ -61,10 +65,10 @@ impl Controller {
             runtime.block_on(async move {
                 while let Some(state) = rx.recv().await {
                     let mut app_state = app_state.lock().unwrap();
+                    
                     *app_state = state;
                     ui_context.request_repaint();
                 }
-                println!("Listener DISENGAGED");
             })
         });
     }
