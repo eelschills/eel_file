@@ -1,5 +1,7 @@
 use std::fs::File;
 use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use serde_json;
 
 pub enum AppState {
     Idle,
@@ -21,25 +23,30 @@ impl std::fmt::Display for AppState {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct FileInfo {
     path: PathBuf,
     // idk about that chief, will figure it out as I go
     size: u64,
     hash: String,
-    handle: Option<File>,
     name: String,
-    format: String,
+    extension: String,
 }
 
+// for testing porpoises
 impl Default for FileInfo {
     fn default() -> FileInfo {
-        FileInfo {
+        let a = FileInfo {
             path: Default::default(),
             size: 0,
             hash: "".to_string(),
-            handle: None,
             name: "testfile".to_string(),
-            format: "mp3".to_string(),
-        }
+            extension: "mp3".to_string(),
+        };
+
+        let json = serde_json::to_string(&a).unwrap();
+        println!("{}", json);
+        
+        a
     }
 }

@@ -93,10 +93,9 @@ impl UiApp {
 
     fn draw_sender_ui(&mut self, ui: &mut Ui) {
         ui.heading("Send a file");
-
         ui.label("\nFile to send:");
         ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut self.selected_file_str);
+            let mut resp = ui.text_edit_singleline(&mut self.selected_file_str);
 
             if ui.button("Select file").clicked() {
                 self.selected_file_path = FileDialog::new()
@@ -104,25 +103,30 @@ impl UiApp {
                     //.add_filter("rust", &["rs", "toml"])
                     .set_directory("/")
                     .pick_file();
-
+                
                 if let Some(path) = &self.selected_file_path {
                     let text_path = path.to_str().unwrap();
                     self.selected_file_str = text_path.to_owned();
+                    resp.mark_changed();
+                }
+            }
+
+            if resp.changed() {
+                self.selected_file_path = Some(PathBuf::from(&self.selected_file_str.clone()));
+
+                if let Some(path) = &self.selected_file_path {
+                    if let Err(_) = File::open(path) {
+                        let fmt_path = "The current file selection is not valid.".to_string();
+                        ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
+                        self.file_valid_flag = false;
+                    } else {
+                        self.file_valid_flag = true;
+                    }
                 }
             }
         });
 
-        // needs to update the path buffer from the typed line if there's been any manual changes
-        self.selected_file_path = Some(PathBuf::from(&self.selected_file_str.clone()));
-        self.file_valid_flag = true;
-        if let Some(path) = &self.selected_file_path {
-            if let Err(_) = File::open(path) {
-                self.file_valid_flag = false;
-                let fmt_path = "The current file selection is not valid.".to_string();
-                ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
-            }
-        }
-
+        // this needs to update the path buffer from the typed line if there's been any manual changes
         let fmt_path = format!(
             "DEBUG: Current app state: {}",
             self.app_state.lock().unwrap()
@@ -220,8 +224,8 @@ impl UiApp {
 
         ui.add(egui::ProgressBar::new(self.progress));
 
-        self.progress += 0.001;
-        self.progress = self.progress % 1f32;
+        // self.progress += 0.001;
+        // self.progress = self.progress % 1f32;
 
         ui.horizontal(|ui| {
             ui.label(format!("Progress: {}%", (self.progress * 100.0).round()));
@@ -239,4 +243,6 @@ impl UiApp {
             false
         }
     }
+    
+    
 }
