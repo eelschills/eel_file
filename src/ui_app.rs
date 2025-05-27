@@ -146,7 +146,7 @@ impl UiApp {
             });
         });
         ui.add_space(0.5);
-        if ui.button("SNEED").clicked() {
+        if ui.button("SEND").clicked() {
             // testing file info
             self.controller.send();
         }
