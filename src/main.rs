@@ -43,6 +43,7 @@ fn get_options() -> eframe::NativeOptions {
                 height: 512,
             }))
             .with_resizable(false),
+        renderer: eframe::Renderer::Glow,
         ..Default::default()
     }
 }

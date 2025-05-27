@@ -121,6 +121,7 @@ impl NetController {
             response.len(),
             response
         );
+        
         stream.write_all(resp.as_bytes()).await.unwrap();
         stream.flush().await.unwrap();
 

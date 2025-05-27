@@ -1,3 +1,4 @@
+use std::fs::File;
 use crate::controller::Controller;
 use eel_file::AppState;
 use eframe::egui;
@@ -24,6 +25,7 @@ pub struct UiApp {
     message: String,
     shutting_down: bool,
     allowed_to_close: bool,
+    file_valid_flag: bool,
 }
 
 impl eframe::App for UiApp {
@@ -85,6 +87,7 @@ impl UiApp {
             message: String::new(),
             shutting_down: false,
             allowed_to_close: false,
+            file_valid_flag: false,
         }
     }
 
@@ -111,10 +114,13 @@ impl UiApp {
 
         // needs to update the path buffer from the typed line if there's been any manual changes
         self.selected_file_path = Some(PathBuf::from(&self.selected_file_str.clone()));
-
+        self.file_valid_flag = true;
         if let Some(path) = &self.selected_file_path {
-            let fmt_path = format!("DEBUG: The current actual path buffer: {}", path.display());
-            ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
+            if let Err(_) = File::open(path) {
+                self.file_valid_flag = false;
+                let fmt_path = "The current file selection is not valid.".to_string();
+                ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
+            }
         }
 
         let fmt_path = format!(
@@ -122,18 +128,23 @@ impl UiApp {
             self.app_state.lock().unwrap()
         );
         ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
+        
+        let enabled = {
+            self.idle_check() && self.file_valid_flag
+        };
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label("Target IP:");
-                ui.text_edit_singleline(&mut self.send_ip_str);
+                
+                ui.add_enabled(enabled, egui::TextEdit::singleline(&mut self.send_ip_str));
             });
 
             ui.add_space(0.5);
 
             ui.vertical(|ui| {
                 ui.label("Port");
-                ui.add(
+                ui.add_enabled(enabled,
                     egui::TextEdit::singleline(&mut self.port_send).desired_width(50.0), // Make it narrower
                 );
             });
@@ -142,51 +153,51 @@ impl UiApp {
 
             ui.vertical(|ui| {
                 ui.label("Password:");
-                ui.text_edit_singleline(&mut self.password);
+                ui.add_enabled(enabled, egui::TextEdit::singleline(&mut self.password));
             });
         });
+        
         ui.add_space(0.5);
-        if ui.button("SEND").clicked() {
-            // testing file info
+        
+        if ui.add_enabled(enabled, egui::Button::new("SEND")).clicked() {
             self.controller.send();
         }
     }
 
     fn draw_receiver_ui(&mut self, ui: &mut Ui) {
+        let enabled = self.idle_check();
+        
         ui.heading("Receive a file");
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
+                
                 ui.label("Port");
-
-                match self.app_state.lock().unwrap().deref() {
-                    AppState::Idle | AppState::Listening => {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0), // Make it narrower
-                        );
-                    }
-                    _ => {
-                        ui.add_enabled(
-                            false,
-                            egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0),
-                        );
-                    }
-                }
+                ui.add_enabled(
+                    enabled,
+                    egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0),
+                );
+                
             });
 
             ui.add_space(0.5);
 
             ui.vertical(|ui| {
                 ui.label("Password:");
-                ui.text_edit_singleline(&mut self.password);
+
+                ui.add_enabled(
+                    enabled,
+                    egui::TextEdit::singleline(&mut self.password),
+                );
             });
         });
 
         ui.add_space(0.5);
-        if ui.button("LISTEN").clicked() {
-            // todo: ask for result before swapping state
+        
+        if ui.add_enabled(enabled, egui::Button::new("LISTEN")).clicked() {
             self.controller.listen();
         }
+        
     }
 
     fn draw_status_ui(&mut self, ui: &mut Ui) {
@@ -219,6 +230,13 @@ impl UiApp {
             }
         });
         
-        
+    }
+    
+    fn idle_check(&self) -> bool {
+        if let AppState::Idle = self.app_state.lock().unwrap().deref() {
+            true
+        } else {
+            false
+        }
     }
 }
