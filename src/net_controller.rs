@@ -87,6 +87,8 @@ impl NetController {
         let _ = tx.send(AppState::Listening);
         
         let task_token = CancellationToken::new();
+        
+        task_token_ref.lock().unwrap().replace(task_token.clone());
         // todo: actually put it inside of
 
         loop {
