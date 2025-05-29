@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -114,33 +114,38 @@ impl NetController {
         addr: SocketAddr,
         shutdown_token: CancellationToken,
     ) {
-        println!("Handling request...");
-        let response = r#"{"message":"Hello, Eels!"}"#;
-        let resp = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
-            response.len(),
-            response
-        );
+        let mut metadata = String::new();
+        let mut buffer = BufReader::new(&mut stream);
+        let mut content_length: usize = 0;
+
+        let mut lines = (&mut buffer).lines();
         
-        stream.write_all(resp.as_bytes()).await.unwrap();
-        stream.flush().await.unwrap();
-
-        let file = File::create("testfile.txt");
-
-        match file {
-            Ok(mut file) => {
-                for i in 1..10000 {
-                    if shutdown_token.is_cancelled() {
-                        println!("Shutting down from file loop?");
-                        remove_file("testfile.txt").expect("Could not delete file!");
-                        break;
-                    }
-                    file.write_all(i.to_string().as_bytes()).expect("Write failed!");
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
-                }
+        while let Some(line) = lines.next_line().await.unwrap() {
+            if line.starts_with("Content-Length") {
+                // wow if only I could chain these
+                let mut length = line.clone();
+                length.retain(|c| c.is_digit(10));
+                content_length = length.parse().unwrap();
+                break;
             }
-            Err(e) => { println!("File creation failed! Reason {}", e) }
         }
+        
+        // skipping \r\n
+        let mut skip_buf = [0u8; 2];
+        buffer.read_exact(&mut skip_buf).await.unwrap();
+        
+        let mut content = vec![0u8; content_length];
+        buffer.read_exact(&mut content).await.unwrap();
+        
+        for byte in &content {
+            metadata.push(*byte as char);
+        }
+        
+        println!("Metadata: {}", metadata);
+        
+        let file_info: FileInfo = serde_json::from_str(&metadata).unwrap();
+        
+        println!("{:?},", file_info);
     }
 
     async fn send(tx: UnboundedSender<AppState>, task_token: CancellationToken) {

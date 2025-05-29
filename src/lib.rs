@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -17,13 +16,13 @@ impl std::fmt::Display for AppState {
             AppState::Idle => write!(f, "Idle"),
             AppState::Listening => write!(f, "Listening"),
             AppState::Accepting(_) => write!(f, "Accepting"),
-            AppState::Sending(FileInfo) => write!(f, "Sending"),
+            AppState::Sending(_) => write!(f, "Sending"),
             AppState::Handshake(_) => write!(f, "Handshake"),
         }
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct FileInfo {
     path: PathBuf,
     // idk about that chief, will figure it out as I go
