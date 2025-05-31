@@ -1,10 +1,10 @@
 use std::fs::File;
 use crate::controller::Controller;
-use eel_file::AppState;
+use eel_file::{AppState, FileInfo};
 use eframe::egui;
 use eframe::egui::{Ui, ViewportCommand};
 use rfd::FileDialog;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -22,10 +22,11 @@ pub struct UiApp {
     port_send: String,
     port_recv: String,
     progress: f32,
-    message: String,
+    status_message: String,
     shutting_down: bool,
     allowed_to_close: bool,
     file_valid_flag: bool,
+    file_info: Option<FileInfo>,
 }
 
 impl eframe::App for UiApp {
@@ -84,10 +85,11 @@ impl UiApp {
             port_send: String::new(),
             port_recv: String::new(),
             progress: 0.0,
-            message: String::new(),
+            status_message: "Selected file: N\\A, size (in bytes lol): N\\A".to_string(),
             shutting_down: false,
             allowed_to_close: false,
             file_valid_flag: false,
+            file_info: None,
         }
     }
 
@@ -115,12 +117,22 @@ impl UiApp {
                 self.selected_file_path = Some(PathBuf::from(&self.selected_file_str.clone()));
 
                 if let Some(path) = &self.selected_file_path {
-                    if let Err(_) = File::open(path) {
-                        let fmt_path = "The current file selection is not valid.".to_string();
-                        ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
-                        self.file_valid_flag = false;
-                    } else {
-                        self.file_valid_flag = true;
+                    let file = File::open(path);
+
+                    match file {
+                        Ok(file) => {
+                            self.file_valid_flag = true;
+                            let metadata = UiApp::generate_metadata(&file, self.selected_file_path.clone().unwrap());
+                            self.status_message = format!("Selected file: {}, size (in bytes lol): {}", metadata.name, metadata.size).as_str().parse().unwrap();
+                            self.file_info = Some(metadata);
+                        }
+                        Err(_) => {
+                            let fmt_path = "The current file selection is not valid.".to_string();
+                            ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
+                            self.file_valid_flag = false;
+                            self.status_message = "Selected file: N\\A, size (in bytes lol): N\\A".to_string();
+                            self.file_info = None;
+                        }
                     }
                 }
             }
@@ -164,7 +176,10 @@ impl UiApp {
         ui.add_space(0.5);
         
         if ui.add_enabled(enabled, egui::Button::new("SEND")).clicked() {
-            self.controller.send();
+            // todo: add checks to see that we have all this info before we show the button
+            let addr = Ipv4Addr::new(127, 0, 0, 1);
+            let socket = SocketAddrV4::new(addr, 7878);
+            self.controller.send(socket, self.file_info.clone().unwrap());
         }
     }
 
@@ -199,7 +214,7 @@ impl UiApp {
         ui.add_space(0.5);
         
         if ui.add_enabled(enabled, egui::Button::new("LISTEN")).clicked() {
-            self.controller.listen();
+            self.controller.listen(PathBuf::from("C:\\eelfile"), 7878);
         }
         
     }
@@ -207,25 +222,9 @@ impl UiApp {
     fn draw_status_ui(&mut self, ui: &mut Ui) {
         ui.heading("Status");
 
-        ui.label("File metadata: N/A");
-
-        /* if let AppState::Listening = self.ui_state {
-            match self.controller.poll() {
-                Ok(appstate) => self.message = msg,
-                Err(EelError::Poll(_)) => {
-                    panic!("Trying to poll a non-existing worker!")
-                }
-                // this can only be empty stream, do nothing
-                Err(msg) => {}
-            }
-
-            ui.label(format!("Received message: {}", self.message));
-        } */
+        ui.label(format!("{}", self.status_message));
 
         ui.add(egui::ProgressBar::new(self.progress));
-
-        // self.progress += 0.001;
-        // self.progress = self.progress % 1f32;
 
         ui.horizontal(|ui| {
             ui.label(format!("Progress: {}%", (self.progress * 100.0).round()));
@@ -233,7 +232,6 @@ impl UiApp {
                 self.controller.abort();
             }
         });
-        
     }
     
     fn idle_check(&self) -> bool {
@@ -241,6 +239,23 @@ impl UiApp {
             true
         } else {
             false
+        }
+    }
+
+    fn generate_metadata(file: &File, path: PathBuf) -> FileInfo {
+        // name, extension, size, hash
+        let metadata = file.metadata().unwrap();
+
+        let size = metadata.len();
+        // I'll leave the hashing to the worker thread, there's no point doing this work here
+        let hash = String::new();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        
+        FileInfo {
+            path: Some(path.clone()),
+            size,
+            hash,
+            name
         }
     }
     

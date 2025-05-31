@@ -1,10 +1,9 @@
 use eel_file::{AppState, FileInfo};
-use std::fs::{remove_file, File};
-use std::io::Write;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -12,6 +11,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+use eel_file::TransferState::Transferring;
+
 type CancelToken = Arc<Mutex<Option<CancellationToken>>>;
 
 pub struct NetController {
@@ -22,8 +23,8 @@ pub struct NetController {
 }
 
 pub enum NetCommand {
-    Send,
-    Receive,
+    Send(SocketAddrV4, FileInfo),
+    Receive(PathBuf, u16),
 }
 
 impl NetController {
@@ -38,14 +39,13 @@ impl NetController {
         }
     }
 
-    pub fn start(&mut self, _port: usize, cmd: NetCommand) -> UnboundedReceiver<AppState> {
-        
+    pub fn start(&mut self, cmd: NetCommand) -> UnboundedReceiver<AppState> {
         let (tx, rx) = mpsc::unbounded_channel();
         
         let server_token = CancellationToken::new();
 
         match cmd {
-            NetCommand::Send => {
+            NetCommand::Send(addr, file_info) => {
                 let task_token = CancellationToken::new();
                 println!("Attempting to send a message");
                 self.task_token.lock().unwrap().replace(server_token.clone());
@@ -53,18 +53,18 @@ impl NetController {
                     .runtime
                     .as_ref()
                     .unwrap()
-                    .spawn(Self::send(tx, task_token.clone()));
+                    .spawn(Self::send(tx, task_token.clone(), addr, file_info));
                 self.worker = Some(futures_rewritten);
                 rx
             }
-            NetCommand::Receive => {
+            NetCommand::Receive(path, port) => {
                 self.server_token = Some(server_token.clone());
                 self.task_token.lock().unwrap().replace(server_token.clone());
                 let futures_rewritten = self
                     .runtime
                     .as_ref()
                     .unwrap()
-                    .spawn(Self::listen(tx, server_token.clone(), self.task_token.clone()));
+                    .spawn(Self::listen(tx, server_token.clone(), self.task_token.clone(), path, port));
                 self.worker = Some(futures_rewritten);
                 rx
             }
@@ -80,9 +80,9 @@ impl NetController {
         self.task_token.lock().unwrap().take();
     }
 
-    async fn listen(tx: UnboundedSender<AppState>, server_token: CancellationToken, task_token_ref: CancelToken) {
+    async fn listen(tx: UnboundedSender<AppState>, server_token: CancellationToken, task_token_ref: CancelToken, path: PathBuf, port: u16) {
         // todo: fix unwrapping
-        let addr: SocketAddr = format!("127.0.0.1:{}", 7878).parse().unwrap();
+        let addr: SocketAddr = format!("0.0.0.0:{}", 7878).parse().unwrap();
         let listener = TcpListener::bind(addr).await.unwrap();
         let _ = tx.send(AppState::Listening);
         
@@ -100,9 +100,9 @@ impl NetController {
                 },
 
                 Ok((stream, addr)) = listener.accept() => {
-                    let _ = tx.send(AppState::Accepting(0.0));
+                    let _ = tx.send(AppState::Accepting(Transferring(0.0)));
                     // if in the future I want to listen to new connections and tell them to fuck off, this is where I'd do it
-                    Self::handle_rx_stream(stream, addr, task_token.clone()).await;
+                    Self::handle_rx_stream(stream, addr, task_token.clone(), path.clone(), tx.clone()).await;
                     let _ = tx.send(AppState::Listening);
                 }
             }
@@ -113,6 +113,8 @@ impl NetController {
         mut stream: TcpStream,
         addr: SocketAddr,
         shutdown_token: CancellationToken,
+        path_buf: PathBuf,
+        tx: UnboundedSender<AppState>,
     ) {
         let mut metadata = String::new();
         let mut buffer = BufReader::new(&mut stream);
@@ -143,12 +145,12 @@ impl NetController {
         
         println!("Metadata: {}", metadata);
         
-        let file_info: FileInfo = serde_json::from_str(&metadata).unwrap();
+        let file_info: FileInfo = serde_json::from_str(&metadata).expect("What the FUG");
         
         println!("{:?},", file_info);
     }
 
-    async fn send(tx: UnboundedSender<AppState>, task_token: CancellationToken) {
+    async fn send(tx: UnboundedSender<AppState>, task_token: CancellationToken, addr: SocketAddrV4, file_info: FileInfo) {
         tokio::select! {
         _ = task_token.cancelled() => {
             let tx = tx.clone();
@@ -158,7 +160,7 @@ impl NetController {
 
         _ = async {
             println!("sending?");
-            let _ = tx.send(AppState::Sending(FileInfo::default()));
+            let _ = tx.send(AppState::Sending(Transferring(0.0)));
             sleep(Duration::from_secs(5)).await;
             println!("done!");
             } => {

@@ -2,12 +2,15 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json;
 
+pub mod eel_error;
+pub use eel_error::*;
+
 pub enum AppState {
     Idle,
     Listening,
     Handshake(FileInfo),
-    Accepting(f32),
-    Sending(FileInfo),
+    Accepting(TransferState),
+    Sending(TransferState),
 }
 
 impl std::fmt::Display for AppState {
@@ -22,30 +25,32 @@ impl std::fmt::Display for AppState {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
+pub enum TransferState {
+    Transferring(f32),
+    Result(Result<(), EelError>),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FileInfo {
-    path: PathBuf,
-    // idk about that chief, will figure it out as I go
-    size: u64,
-    hash: String,
-    name: String,
-    extension: String,
+    pub path: Option<PathBuf>,
+    pub size: u64,
+    pub hash: String,
+    pub name: String
 }
 
 // for testing porpoises
 impl Default for FileInfo {
     fn default() -> FileInfo {
         let a = FileInfo {
-            path: Default::default(),
+            path: None,
             size: 0,
             hash: "".to_string(),
             name: "testfile".to_string(),
-            extension: "mp3".to_string(),
         };
 
         let json = serde_json::to_string(&a).unwrap();
         println!("{}", json);
-        
         a
     }
 }

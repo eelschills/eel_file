@@ -1,9 +1,10 @@
+use std::net::SocketAddrV4;
+use std::path::PathBuf;
 use crate::net_controller::NetController;
-use eel_file::AppState;
+use eel_file::{AppState, FileInfo};
 use eframe::egui;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio_util::sync::CancellationToken;
 
 pub struct Controller {
     net_controller: NetController,
@@ -20,19 +21,19 @@ impl Controller {
         }
     }
 
-    pub fn listen(&mut self) {
+    pub fn listen(&mut self, path: PathBuf, port: u16) {
         // todo: add None check
         let task_receiver = self
             .net_controller
-            .start(7878, super::net_controller::NetCommand::Receive);
+            .start(super::net_controller::NetCommand::Receive(path, port));
 
         self.listen_to_state(task_receiver);
     }
 
-    pub fn send(&mut self) {
+    pub fn send(&mut self, addr: SocketAddrV4, file_info: FileInfo) {
         let task_receiver = self
             .net_controller
-            .start(7878, super::net_controller::NetCommand::Send);
+            .start(super::net_controller::NetCommand::Send(addr, file_info));
 
         self.listen_to_state(task_receiver);
     }
