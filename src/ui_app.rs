@@ -248,14 +248,14 @@ impl UiApp {
 
         let size = metadata.len();
         // I'll leave the hashing to the worker thread, there's no point doing this work here
-        let hash = String::new();
         let name = path.file_name().unwrap().to_str().unwrap().to_owned();
         
         FileInfo {
             path: Some(path.clone()),
             size,
-            hash,
-            name
+            hash: None,
+            name,
+            sender_addr: None,
         }
     }
     

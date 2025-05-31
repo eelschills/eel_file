@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -35,8 +36,9 @@ pub enum TransferState {
 pub struct FileInfo {
     pub path: Option<PathBuf>,
     pub size: u64,
-    pub hash: String,
-    pub name: String
+    pub hash: Option<Vec<u8>>,
+    pub name: String,
+    pub sender_addr: Option<SocketAddr>
 }
 
 // for testing porpoises
@@ -45,8 +47,9 @@ impl Default for FileInfo {
         let a = FileInfo {
             path: None,
             size: 0,
-            hash: "".to_string(),
+            hash: None,
             name: "testfile".to_string(),
+            sender_addr: None
         };
 
         let json = serde_json::to_string(&a).unwrap();
