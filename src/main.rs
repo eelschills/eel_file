@@ -13,7 +13,7 @@ fn main() -> eframe::Result {
     let options = get_options();
 
     eframe::run_native(
-        "EELFILE™ v0.1.5",
+        "EELFILE™ v0.1.6",
         options,
         Box::new(|cc| {
             // This gives us image support:
@@ -31,7 +31,7 @@ fn main() -> eframe::Result {
 fn get_options() -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 370.0])
+            .with_inner_size([600.0, 500.0])
             .with_icon(Arc::new(egui::IconData {
                 rgba: image::load_from_memory(include_bytes!("../assets/snek.png"))
                     .unwrap()
@@ -40,7 +40,7 @@ fn get_options() -> eframe::NativeOptions {
                 width: 512,
                 height: 512,
             }))
-            .with_resizable(false),
+            .with_resizable(false).with_maximize_button(false),
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     }

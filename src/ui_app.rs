@@ -2,13 +2,14 @@ use std::fs::File;
 use crate::controller::Controller;
 use eel_file::{AppState, FileInfo};
 use eframe::egui;
-use eframe::egui::{Ui, ViewportCommand};
+use eframe::egui::{ScrollArea, TextEdit, Ui, ViewportCommand};
 use rfd::FileDialog;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+use chrono::Local;
 
 pub struct UiApp {
     controller: Controller,
@@ -216,7 +217,7 @@ impl UiApp {
         if ui.add_enabled(enabled, egui::Button::new("LISTEN")).clicked() {
             self.controller.listen(PathBuf::from("C:\\eelfile"), 7878);
         }
-        
+
     }
 
     fn draw_status_ui(&mut self, ui: &mut Ui) {
@@ -232,6 +233,21 @@ impl UiApp {
                 self.controller.abort();
             }
         });
+
+        let mut now = Local::now().to_string();
+
+        ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(&mut now)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(10)
+                        .lock_focus(true)
+                        .desired_width(f32::INFINITY)
+                        .interactive(false),
+                );
+            });
     }
     
     fn idle_check(&self) -> bool {
@@ -249,7 +265,7 @@ impl UiApp {
         let size = metadata.len();
         // I'll leave the hashing to the worker thread, there's no point doing this work here
         let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-        
+
         FileInfo {
             path: Some(path.clone()),
             size,
