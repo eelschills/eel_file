@@ -1,5 +1,5 @@
 use eel_file::TransferState::Transferring;
-use eel_file::{AppState, FileInfo};
+use eel_file::{AppState, EelError, FileInfo};
 use hex_literal::hex;
 use sha2::digest::DynDigest;
 use sha2::{Digest, Sha256};
@@ -8,16 +8,15 @@ use std::io::Read;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use snow::Builder as SnowBuilder;
+use sysinfo::Disks;
 
 type CancelToken = Arc<Mutex<Option<CancellationToken>>>;
 
@@ -137,6 +136,7 @@ impl NetController {
         destination_path_buf: PathBuf,
         tx: UnboundedSender<AppState>,
     ) {
+        
         let buffer = BufReader::new(&mut stream);
         let mut metadata_lines = buffer.lines();
         let mut metadata = String::new();
@@ -146,8 +146,16 @@ impl NetController {
         }
 
         let file_info: FileInfo = serde_json::from_str(&metadata).unwrap();
-
         println!("Received file info: {:?}", file_info);
+        if !NetController::is_enough_space(&destination_path_buf, file_info.size) {
+            // todo: needs a way to propagate an error
+            // I should make a log section in the UI
+            let result = stream.write(b"NO, SIRE.").await.expect("Couldn't write to stream");
+            return;
+        }
+        
+        stream.write(b"HAND IT OVER\n").await.unwrap();
+        // todo: check size, respond
     }
 
     async fn send(
@@ -168,13 +176,13 @@ impl NetController {
             let mut file_info = file_info.clone();
             let mut file_handle = File::open(file_info.path.as_ref().unwrap()).unwrap();
             file_info.hash = Some(Self::hash_file(&mut file_handle));
-                
+
             let mut stream = TcpStream::connect(addr).await.expect("Failed to connect to server");
-                
+
             let file_info_serialized = serde_json::to_string(&file_info).unwrap();
-                
+
             stream.write(file_info_serialized.as_bytes()).await.unwrap();
-                
+
         } => {
                 let _ = tx.send(AppState::Idle).unwrap();
             }
@@ -195,6 +203,23 @@ impl NetController {
 
         hasher.finalize().to_vec()
     }
+    
+    // super hacky solution that assumes the user won't type in a relative path
+    // I wish I could test it on some other device but oh well
+    // also it will just give me a false even if there's an error or there are no matching drives
+    // this is also not portable to other OSs
+    // todo: re-evaluate this
+    fn is_enough_space(path: &PathBuf, filesize: u64) -> bool {
+        let mut volume = path.to_str().unwrap()[0..2].to_string();
+        volume.push_str("\\");
+
+        let disks = Disks::new_with_refreshed_list();
+
+        disks.list().iter().any(|disk| {
+            disk.mount_point().to_str().unwrap() == volume &&
+            disk.available_space() > filesize
+        })
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +236,21 @@ mod tests {
             result,
             hex!("F3E79833B5D642E4C84DAA8E274B5389D759BE391B90F6B62A6C785EF2FA1BCF")
         );
+    }
+    
+    #[test]
+    fn test_free_space_check() {
+        let file_size: u64 = 1024 * 1024 * 1024 * 150;
+        let path_buf = PathBuf::from("C:/Users/user/RustroverProjects/eel_file/assets");
+        
+        let result = NetController::is_enough_space(&path_buf, file_size);
+        
+        assert_eq!(result, false);
+        
+        let file_size: u64 = 1024 * 1024 * 1024 * 20;
+        
+        let result = NetController::is_enough_space(&path_buf, file_size);
+        
+        assert_eq!(result, true);
     }
 }

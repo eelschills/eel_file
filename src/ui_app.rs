@@ -258,6 +258,4 @@ impl UiApp {
             sender_addr: None,
         }
     }
-    
-    
 }

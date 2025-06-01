@@ -22,6 +22,7 @@ snow = "0.9.6"
 
 sha2 = "0.11.0-rc.0"
 hex-literal = "1.0.0"
+sysinfo = "0.35.1"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
