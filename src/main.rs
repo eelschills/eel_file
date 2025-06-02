@@ -37,7 +37,7 @@ fn main() -> eframe::Result {
 fn get_options() -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([600.0, 500.0])
+            .with_inner_size([600.0, 520.0])
             .with_icon(Arc::new(egui::IconData {
                 rgba: image::load_from_memory(include_bytes!("../assets/snek.png"))
                     .unwrap()

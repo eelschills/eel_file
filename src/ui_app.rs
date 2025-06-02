@@ -18,6 +18,8 @@ pub struct UiApp {
     file_info: Option<FileInfo>,
     selected_file_str: String,
     selected_file_path: Option<PathBuf>,
+    receive_dir_str: String,
+    receive_dir_path: Option<PathBuf>,
     receive_ip: Option<Ipv4Addr>,
     receive_ip_str: String,
     send_ip: Option<Ipv4Addr>,
@@ -82,6 +84,8 @@ impl UiApp {
             app_state,
             selected_file_path: None,
             selected_file_str: String::new(),
+            receive_dir_path: None,
+            receive_dir_str: String::new(),
             receive_ip: None,
             send_ip_str: String::new(),
             receive_ip_str: String::new(),
@@ -161,7 +165,7 @@ impl UiApp {
             ui.vertical(|ui| {
                 ui.label("Target IP:");
                 let ip_textbox = ui.add_enabled(self.idle_check(), TextEdit::singleline(&mut self.send_ip_str));
-                
+
                 if ip_textbox.changed() {
                     // reparse the IP
                     match Self::check_ip(&self.send_ip_str) {
@@ -185,9 +189,9 @@ impl UiApp {
                 let send_port_field = ui.add_enabled(self.idle_check(),
                                                      TextEdit::singleline(&mut self.port_send_str).desired_width(50.0), // Make it narrower
                 );
-                
+
                 self.port_send_str.retain(|c| c.is_digit(10));
-                
+
                 if send_port_field.changed() {
                     // reparse port
                     match Self::validate_port(self.port_send_str.as_str()) {
@@ -201,7 +205,7 @@ impl UiApp {
                         }
                     }
                 }
-                
+
             });
 
             ui.add_space(0.5);
@@ -223,6 +227,26 @@ impl UiApp {
     fn draw_receiver_ui(&mut self, ui: &mut Ui) {
         
         ui.heading("Receive a file");
+        
+        ui.horizontal(|ui| {
+            let mut resp = ui.text_edit_singleline(&mut self.receive_dir_str);
+
+            if ui.button("Select folder").clicked() {
+                self.receive_dir_path = FileDialog::new()
+                    //.add_filter("text", &["txt", "rs"])
+                    //.add_filter("rust", &["rs", "toml"])
+                    .set_directory("/")
+                    .pick_folder();
+
+                if let Some(path) = &self.receive_dir_path {
+                    let text_path = path.to_str().unwrap();
+                    self.receive_dir_str = text_path.to_owned();
+                    resp.mark_changed();
+                }
+            }
+        });
+        
+        // todo: add reparsing on changed()!!!!!!!!
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
@@ -232,21 +256,21 @@ impl UiApp {
                     self.idle_check(),
                     TextEdit::singleline(&mut self.port_recv_str).desired_width(50.0),
                 );
-                
+
                 if listening_port_box.changed() {
                     match Self::validate_port(self.port_recv_str.as_str()) {
                         Ok(port) => {
                             self.port_recv = Some(port);
                             self.flags.insert(EelFlags::receive_port_valid);
                         }
-                        Err(_) => { 
+                        Err(_) => {
                             self.port_recv = None;
                             self.flags.remove(EelFlags::receive_port_valid);
                         }
                     }
                 }
             });
-            
+
             ui.add_space(0.5);
 
             ui.vertical(|ui| {
@@ -254,13 +278,14 @@ impl UiApp {
 
                 ui.add_enabled(
                     self.idle_check(),
-                    TextEdit::singleline(&mut self.password),
+                    // this is shit and awfully specific, if I weren't lazy, I'd do it with the layout
+                    TextEdit::singleline(&mut self.password).desired_width(213.0),
                 );
             });
         });
 
         ui.add_space(0.5);
-        
+
         if ui.add_enabled(self.flags.contains(EelFlags::receive_port_valid), egui::Button::new("LISTEN")).clicked() {
             self.controller.listen(PathBuf::from("C:\\eelfile"), self.port_recv.unwrap());
         }
@@ -280,7 +305,7 @@ impl UiApp {
                 self.controller.abort();
             }
         });
-        
+
         let mut log_text = self.logger.lock().unwrap();
         ScrollArea::vertical()
             .auto_shrink([false; 2])
@@ -302,7 +327,7 @@ impl UiApp {
             false
         }
     }
-    
+
     fn validate_port(port: &str) -> Result<u16, ParseIntError> {
         match port.parse::<u16>() {
             Ok(port) => { Ok(port) },
