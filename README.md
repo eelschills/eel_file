@@ -6,7 +6,7 @@ DOWNLOAD EELFILE, WRITTEN 100% IN RUST
 
 *You know it's not a virus because it's open source :^)*
 
-![image](https://github.com/user-attachments/assets/8e551f98-ab04-4dff-811f-6cef4a5e01b0)
+![image](https://github.com/user-attachments/assets/bb8563a5-ea5b-46e0-9692-afb5d9e16b4b)
 
 \* Noise support planned eventually
 
