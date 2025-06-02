@@ -1,5 +1,4 @@
-use eel_file::TransferState::Transferring;
-use eel_file::{AppState, EelError, FileInfo};
+use eel_file::{AppState, FileInfo};
 use hex_literal::hex;
 use sha2::digest::DynDigest;
 use sha2::{Digest, Sha256};
@@ -15,7 +14,6 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use snow::Builder as SnowBuilder;
 use sysinfo::Disks;
 
 type CancelToken = Arc<Mutex<Option<CancellationToken>>>;
@@ -102,7 +100,7 @@ impl NetController {
         port: u16,
     ) {
         // todo: fix unwrapping
-        let addr: SocketAddr = format!("0.0.0.0:{}", 7878).parse().unwrap();
+        let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
         let listener = TcpListener::bind(addr).await.unwrap();
         let _ = tx.send(AppState::Listening);
 
@@ -120,7 +118,7 @@ impl NetController {
                 },
 
                 Ok((stream, addr)) = listener.accept() => {
-                    let _ = tx.send(AppState::Accepting(Transferring(0.0)));
+                    let _ = tx.send(AppState::Accepting);
                     // if in the future I want to listen to new connections and tell them to fuck off, this is where I'd do it
                     Self::handle_rx_stream(stream, addr, task_token.clone(), path.clone(), tx.clone()).await;
                     let _ = tx.send(AppState::Listening);
@@ -172,11 +170,12 @@ impl NetController {
         }
 
         _ = async {
-            let _ = tx.send(AppState::Handshake(file_info.clone()));
+            let _ = tx.send(AppState::Handshake);
             let mut file_info = file_info.clone();
             let mut file_handle = File::open(file_info.path.as_ref().unwrap()).unwrap();
             file_info.hash = Some(Self::hash_file(&mut file_handle));
-
+            // todo: this REALLY needs to be logged and handled properly, if the server is unreachable or not listening, it's fucking over. Also that select does nothing here,
+            // either fucking kill it or find something to wait on
             let mut stream = TcpStream::connect(addr).await.expect("Failed to connect to server");
 
             let file_info_serialized = serde_json::to_string(&file_info).unwrap();

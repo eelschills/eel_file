@@ -1,33 +1,36 @@
 use std::fs::File;
 use crate::controller::Controller;
-use eel_file::{AppState, FileInfo};
+use eel_file::{AppState, EelFlags, FileInfo};
 use eframe::egui;
-use eframe::egui::{ScrollArea, TextEdit, Ui, ViewportCommand};
+use eframe::egui::{RichText, ScrollArea, TextEdit, Ui, ViewportCommand};
 use rfd::FileDialog;
-use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::net::{AddrParseError, Ipv4Addr, SocketAddrV4};
+use std::num::ParseIntError;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration};
 use chrono::Local;
 
 pub struct UiApp {
     controller: Controller,
     app_state: Arc<Mutex<AppState>>,
+    file_info: Option<FileInfo>,
     selected_file_str: String,
     selected_file_path: Option<PathBuf>,
-    receive_ip: Option<IpAddr>,
-    send_ip_str: String,
+    receive_ip: Option<Ipv4Addr>,
     receive_ip_str: String,
+    send_ip: Option<Ipv4Addr>,
+    send_ip_str: String,
     password: String,
-    port_send: String,
-    port_recv: String,
+    port_send_str: String,
+    port_recv_str: String,
+    port_send: Option<u16>,
+    port_recv: Option<u16>,
     progress: f32,
     status_message: String,
-    shutting_down: bool,
-    allowed_to_close: bool,
-    file_valid_flag: bool,
-    file_info: Option<FileInfo>,
+    logger: Arc<Mutex<String>>,
+    flags: EelFlags
 }
 
 impl eframe::App for UiApp {
@@ -35,26 +38,26 @@ impl eframe::App for UiApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // handle user clicking X
             if ctx.input(|i| i.viewport().close_requested()) {
-                if !self.allowed_to_close {
+                if !self.flags.contains(EelFlags::allowed_to_close) {
                     ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-                    self.shutting_down = true;
+                    self.flags.insert(EelFlags::shutting_down);
                 }
             }
 
-            if self.shutting_down {
+            if self.flags.contains(EelFlags::shutting_down) {
                 egui::Window::new("Do you want to quit?")
                     .collapsible(false)
+                    .fixed_pos(egui::Pos2::new(200.0, 200.0))
                     .resizable(false)
-                    .fixed_size([3000.0, 1000.0])
                     .show(ctx, |ui| {
                         ui.horizontal(|ui| {
                             if ui.button("No").clicked() {
-                                self.shutting_down = false;
+                                self.flags.remove(EelFlags::shutting_down);
                             }
 
                             if ui.button("Yes").clicked() {
-                                self.shutting_down = false;
-                                self.allowed_to_close = true;
+                                self.flags.remove(EelFlags::shutting_down);
+                                self.flags.insert(EelFlags::allowed_to_close);
                                 ui.ctx().send_viewport_cmd(ViewportCommand::Close);
                             }
                         });
@@ -73,7 +76,7 @@ impl eframe::App for UiApp {
 }
 
 impl UiApp {
-    pub fn new(controller: Controller, app_state: Arc<Mutex<AppState>>) -> Self {
+    pub fn new(controller: Controller, app_state: Arc<Mutex<AppState>>, logger: Arc<Mutex<String>>) -> Self {
         Self {
             controller,
             app_state,
@@ -82,15 +85,17 @@ impl UiApp {
             receive_ip: None,
             send_ip_str: String::new(),
             receive_ip_str: String::new(),
+            send_ip: None,
             password: String::new(),
-            port_send: String::new(),
-            port_recv: String::new(),
+            port_send_str: String::new(),
+            port_recv_str: String::new(),
+            port_send: None,
+            port_recv: None,
             progress: 0.0,
+            logger,
             status_message: "Selected file: N\\A, size (in bytes lol): N\\A".to_string(),
-            shutting_down: false,
-            allowed_to_close: false,
-            file_valid_flag: false,
             file_info: None,
+            flags: EelFlags::empty(),
         }
     }
 
@@ -122,7 +127,7 @@ impl UiApp {
 
                     match file {
                         Ok(file) => {
-                            self.file_valid_flag = true;
+                            self.flags.insert(EelFlags::file_valid);
                             let metadata = UiApp::generate_metadata(&file, self.selected_file_path.clone().unwrap());
                             self.status_message = format!("Selected file: {}, size (in bytes lol): {}", metadata.name, metadata.size).as_str().parse().unwrap();
                             self.file_info = Some(metadata);
@@ -130,7 +135,7 @@ impl UiApp {
                         Err(_) => {
                             let fmt_path = "The current file selection is not valid.".to_string();
                             ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
-                            self.file_valid_flag = false;
+                            self.flags.remove(EelFlags::file_valid);
                             self.status_message = "Selected file: N\\A, size (in bytes lol): N\\A".to_string();
                             self.file_info = None;
                         }
@@ -146,46 +151,76 @@ impl UiApp {
         );
         ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
         
-        let enabled = {
-            self.idle_check() && self.file_valid_flag
+        let send_button_enabled = {
+            // hmmmmmm
+            let valid_send_settings: EelFlags = EelFlags::file_valid | EelFlags::send_ip_valid | EelFlags::send_port_valid;
+            self.idle_check() && self.flags.contains(valid_send_settings)
         };
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.label("Target IP:");
+                let ip_textbox = ui.add_enabled(self.idle_check(), TextEdit::singleline(&mut self.send_ip_str));
                 
-                ui.add_enabled(enabled, egui::TextEdit::singleline(&mut self.send_ip_str));
+                if ip_textbox.changed() {
+                    // reparse the IP
+                    match Self::check_ip(&self.send_ip_str) {
+                        Ok(ip) => {
+                            self.flags.insert(EelFlags::send_ip_valid);
+                            self.send_ip = Some(ip);
+                            println!("IP valid!");
+                        }
+                        Err(e) => {
+                            self.flags.remove(EelFlags::send_ip_valid);
+                            self.send_ip = None;
+                        }
+                    }
+                }
             });
 
             ui.add_space(0.5);
 
             ui.vertical(|ui| {
                 ui.label("Port");
-                ui.add_enabled(enabled,
-                    egui::TextEdit::singleline(&mut self.port_send).desired_width(50.0), // Make it narrower
+                let send_port_field = ui.add_enabled(self.idle_check(),
+                                                     TextEdit::singleline(&mut self.port_send_str).desired_width(50.0), // Make it narrower
                 );
+                
+                self.port_send_str.retain(|c| c.is_digit(10));
+                
+                if send_port_field.changed() {
+                    // reparse port
+                    match Self::validate_port(self.port_send_str.as_str()) {
+                        Ok(port) => {
+                            self.flags.insert(EelFlags::send_port_valid);
+                            self.port_send = Some(port);
+                        }
+                        Err(_) => {
+                            self.flags.remove(EelFlags::send_port_valid);
+                            self.port_send = None;
+                        }
+                    }
+                }
+                
             });
 
             ui.add_space(0.5);
 
             ui.vertical(|ui| {
                 ui.label("Password:");
-                ui.add_enabled(enabled, egui::TextEdit::singleline(&mut self.password));
+                ui.add_enabled(self.idle_check(), TextEdit::singleline(&mut self.password));
             });
         });
         
         ui.add_space(0.5);
         
-        if ui.add_enabled(enabled, egui::Button::new("SEND")).clicked() {
-            // todo: add checks to see that we have all this info before we show the button
-            let addr = Ipv4Addr::new(127, 0, 0, 1);
-            let socket = SocketAddrV4::new(addr, 7878);
+        if ui.add_enabled(send_button_enabled, egui::Button::new("SEND")).clicked() {
+            let socket = SocketAddrV4::new(self.send_ip.unwrap(), self.port_send.unwrap());
             self.controller.send(socket, self.file_info.clone().unwrap());
         }
     }
 
     fn draw_receiver_ui(&mut self, ui: &mut Ui) {
-        let enabled = self.idle_check();
         
         ui.heading("Receive a file");
 
@@ -193,29 +228,41 @@ impl UiApp {
             ui.vertical(|ui| {
                 
                 ui.label("Port");
-                ui.add_enabled(
-                    enabled,
-                    egui::TextEdit::singleline(&mut self.port_recv).desired_width(50.0),
+                let listening_port_box = ui.add_enabled(
+                    self.idle_check(),
+                    TextEdit::singleline(&mut self.port_recv_str).desired_width(50.0),
                 );
                 
+                if listening_port_box.changed() {
+                    match Self::validate_port(self.port_recv_str.as_str()) {
+                        Ok(port) => {
+                            self.port_recv = Some(port);
+                            self.flags.insert(EelFlags::receive_port_valid);
+                        }
+                        Err(_) => { 
+                            self.port_recv = None;
+                            self.flags.remove(EelFlags::receive_port_valid);
+                        }
+                    }
+                }
             });
-
+            
             ui.add_space(0.5);
 
             ui.vertical(|ui| {
                 ui.label("Password:");
 
                 ui.add_enabled(
-                    enabled,
-                    egui::TextEdit::singleline(&mut self.password),
+                    self.idle_check(),
+                    TextEdit::singleline(&mut self.password),
                 );
             });
         });
 
         ui.add_space(0.5);
         
-        if ui.add_enabled(enabled, egui::Button::new("LISTEN")).clicked() {
-            self.controller.listen(PathBuf::from("C:\\eelfile"), 7878);
+        if ui.add_enabled(self.flags.contains(EelFlags::receive_port_valid), egui::Button::new("LISTEN")).clicked() {
+            self.controller.listen(PathBuf::from("C:\\eelfile"), self.port_recv.unwrap());
         }
 
     }
@@ -233,19 +280,17 @@ impl UiApp {
                 self.controller.abort();
             }
         });
-
-        let mut now = Local::now().to_string();
-
+        
+        let mut log_text = self.logger.lock().unwrap();
         ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 ui.add(
-                    TextEdit::multiline(&mut now)
+                    TextEdit::multiline(&mut *log_text)
                         .font(egui::TextStyle::Monospace)
                         .desired_rows(10)
-                        .lock_focus(true)
                         .desired_width(f32::INFINITY)
-                        .interactive(false),
+                        .interactive(false)
                 );
             });
     }
@@ -255,6 +300,13 @@ impl UiApp {
             true
         } else {
             false
+        }
+    }
+    
+    fn validate_port(port: &str) -> Result<u16, ParseIntError> {
+        match port.parse::<u16>() {
+            Ok(port) => { Ok(port) },
+            Err(e) => {Err(e)}
         }
     }
 
@@ -273,5 +325,9 @@ impl UiApp {
             name,
             sender_addr: None,
         }
+    }
+
+    fn check_ip(ip: &String) -> Result<Ipv4Addr, AddrParseError> {
+        Ok(ip.parse::<Ipv4Addr>()?)
     }
 }

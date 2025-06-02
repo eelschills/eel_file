@@ -4,6 +4,8 @@ pub enum EelError {
     Interrupted(String),
     FreeSpace(String),
     PermissionError(String),
+    ConnectionError(String),
+    InvalidIP(String),
 }
 
 impl std::fmt::Display for EelError {
@@ -13,6 +15,8 @@ impl std::fmt::Display for EelError {
             EelError::Interrupted(err) => write!(f, "Interrupted: {}", err),
             EelError::FreeSpace(err) => write!(f, "Not enough free space to write the file: {}", err),
             EelError::PermissionError(err) => write!(f, "Permission error: {}", err),
+            EelError::ConnectionError(err) => write!(f, "Connection error, server is either unreachable or connection was refused: {}", err),
+            EelError::InvalidIP(err) => write!(f, "Invalid IP: {}", err),
         }
     }
 }
