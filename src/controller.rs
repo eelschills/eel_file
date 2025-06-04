@@ -1,40 +1,26 @@
+use crate::net_controller::NetController;
+use eel_file::eel_log::EelWatcher;
+use eel_file::{AppEvent, AppState, FileInfo};
+use eframe::egui;
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
-use crate::net_controller::NetController;
-use eel_file::{AppState, FileInfo};
-use eframe::egui;
 use std::sync::{Arc, Mutex};
-use chrono::Local;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 pub struct Controller {
     net_controller: NetController,
-    app_state: Arc<Mutex<AppState>>,
     ui_context: egui::Context,
-    logger: Arc<Mutex<String>>,
+    watcher: Arc<Mutex<EelWatcher>>,
 }
 
 impl Controller {
-    pub fn new(ui_context: egui::Context, app_state: Arc<Mutex<AppState>>, logger: Arc<Mutex<String>>) -> Controller {
+    pub fn new(ui_context: egui::Context, logger: Arc<Mutex<EelWatcher>>) -> Controller {
         // todo: lel fix this trash
-        let mut c = Controller {
+        Controller {
             net_controller: NetController::new(),
             ui_context,
-            app_state,
-            logger,
-        };
-        
-        Self::temp_log(&mut c);
-        
-        c
-    }
-    
-    fn temp_log(&mut self) {
-        let now = Local::now();
-        let mut formatted = now.format("%Y-%m-%d %H:%M:%S%.3f: ").to_string();
-        formatted.push_str("Runtime initialized. Ready!\n");
-
-        self.logger.lock().unwrap().push_str(&formatted);
+            watcher: logger,
+        }
     }
 
     pub fn listen(&mut self, path: PathBuf, port: u16) {
@@ -55,19 +41,15 @@ impl Controller {
     }
 
     pub fn abort(&mut self) {
-        let app_state = self.app_state.lock().unwrap();
-        
-        match *app_state {
-            AppState::Listening => { self.net_controller.abort_server() }
-            AppState::Accepting | AppState::Sending => { self.net_controller.abort_task() }
+        match self.watcher.lock().unwrap().app_state {
+            AppState::Listening => self.net_controller.abort_server(),
+            AppState::Accepting | AppState::Sending => self.net_controller.abort_task(),
             _ => {}
         }
     }
-    
-    
-    fn listen_to_state(&mut self, mut rx: UnboundedReceiver<AppState>) {
-        println!("Listener ENGAGED");
-        let app_state = self.app_state.clone();
+
+    fn listen_to_state(&mut self, mut rx: UnboundedReceiver<AppEvent>) {
+        let watcher = self.watcher.clone();
         let ui_context = self.ui_context.clone(); // Clone the context for thread
 
         std::thread::spawn(move || {
@@ -76,15 +58,31 @@ impl Controller {
                 .build()
                 .expect("Could not build controller listen runtime");
             runtime.block_on(async move {
-                while let Some(state) = rx.recv().await {
-                    let mut app_state = app_state.lock().unwrap();
+                while let Some(event_msg) = rx.recv().await {
+                    match event_msg {
+                        AppEvent::AppState(state) => {
+                            watcher.lock().unwrap().app_state = state;
+                        }
+                        
+                        AppEvent::FileInfo(metadata) => {
+                            watcher.lock().unwrap().metadata = Some(metadata);
+                        }
+                        
+                        AppEvent::Progress(progress) => {
+                            watcher.lock().unwrap().progress = progress;
+                        }
+                        AppEvent::StatusMessage(loggie) => {
+                            watcher.lock().unwrap().log(&loggie);
+                        }
+                        
+                        AppEvent::Error(err) => {
+                            watcher.lock().unwrap().log(format!("ERROR: {}", err).as_str());
+                        }
+                    }
 
-                    *app_state = state;
                     ui_context.request_repaint();
                 }
             })
         });
     }
 }
-
-// todo: tests

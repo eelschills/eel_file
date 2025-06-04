@@ -5,10 +5,9 @@ mod net_controller;
 mod ui_app;
 
 use crate::controller::Controller;
-use eel_file::AppState;
 use eframe::egui;
 use std::sync::{Arc, Mutex};
-use chrono::Local;
+use eel_file::eel_log::EelWatcher;
 
 fn main() -> eframe::Result {
     let options = get_options();
@@ -19,15 +18,13 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            // todo: make logger a real naive logger struct instead of making strings and time every time
-            let now = Local::now();
-            let mut formatted = now.format("%Y-%m-%d %H:%M:%S%.3f: ").to_string();
-            formatted.push_str("EelFile initializing...\n");
             
-            let logger = Arc::new(Mutex::new(formatted));
-            let app_state = Arc::new(Mutex::new(AppState::Idle));
-            let controller = Controller::new(cc.egui_ctx.clone(), app_state.clone(), logger.clone());
-            let ui_frame = ui_app::UiApp::new(controller, app_state.clone(), logger.clone());
+            let watcher = Arc::new(Mutex::new(EelWatcher::new()));
+            
+            watcher.lock().unwrap().log("Welcom to EELFILE™ :)");
+            
+            let controller = Controller::new(cc.egui_ctx.clone(), watcher.clone());
+            let ui_frame = ui_app::UiApp::new(controller, watcher.clone());
 
             Ok(Box::new(ui_frame))
         }),

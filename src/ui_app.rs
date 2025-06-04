@@ -10,11 +10,10 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration};
-use chrono::Local;
+use eel_file::eel_log::EelWatcher;
 
 pub struct UiApp {
     controller: Controller,
-    app_state: Arc<Mutex<AppState>>,
     file_info: Option<FileInfo>,
     selected_file_str: String,
     selected_file_path: Option<PathBuf>,
@@ -31,7 +30,7 @@ pub struct UiApp {
     port_recv: Option<u16>,
     progress: f32,
     status_message: String,
-    logger: Arc<Mutex<String>>,
+    logger: Arc<Mutex<EelWatcher>>,
     flags: EelFlags
 }
 
@@ -78,10 +77,9 @@ impl eframe::App for UiApp {
 }
 
 impl UiApp {
-    pub fn new(controller: Controller, app_state: Arc<Mutex<AppState>>, logger: Arc<Mutex<String>>) -> Self {
+    pub fn new(controller: Controller, logger: Arc<Mutex<EelWatcher>>) -> Self {
         Self {
             controller,
-            app_state,
             selected_file_path: None,
             selected_file_str: String::new(),
             receive_dir_path: None,
@@ -151,7 +149,7 @@ impl UiApp {
         // this needs to update the path buffer from the typed line if there's been any manual changes
         let fmt_path = format!(
             "DEBUG: Current app state: {}",
-            self.app_state.lock().unwrap()
+            self.logger.lock().unwrap().app_state
         );
         ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
         
@@ -305,13 +303,13 @@ impl UiApp {
                 self.controller.abort();
             }
         });
-
-        let mut log_text = self.logger.lock().unwrap();
+        
+        let mut log_text = self.logger.lock().unwrap().messages.clone();
         ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 ui.add(
-                    TextEdit::multiline(&mut *log_text)
+                    TextEdit::multiline(&mut log_text)
                         .font(egui::TextStyle::Monospace)
                         .desired_rows(10)
                         .desired_width(f32::INFINITY)
@@ -321,7 +319,7 @@ impl UiApp {
     }
     
     fn idle_check(&self) -> bool {
-        if let AppState::Idle = self.app_state.lock().unwrap().deref() {
+        if let AppState::Idle = self.logger.lock().unwrap().app_state {
             true
         } else {
             false

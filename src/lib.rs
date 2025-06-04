@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use bitflags::bitflags;
@@ -6,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 pub mod eel_error;
+pub mod eel_log;
+
 pub use eel_error::*;
 
 pub enum AppState {
@@ -14,6 +15,7 @@ pub enum AppState {
     Handshake,
     Accepting,
     Sending,
+    Connecting
 }
 
 impl std::fmt::Display for AppState {
@@ -24,6 +26,7 @@ impl std::fmt::Display for AppState {
             AppState::Accepting => write!(f, "Accepting"),
             AppState::Sending => write!(f, "Sending"),
             AppState::Handshake => write!(f, "Handshake"),
+            AppState::Connecting => write!(f, "Connecting"),
         }
     }
 }
@@ -33,7 +36,7 @@ pub enum AppEvent {
     FileInfo(FileInfo),
     Progress(f32),
     StatusMessage(String),
-    Error(Box<dyn Error>),
+    Error(EelError),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
