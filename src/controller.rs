@@ -43,7 +43,7 @@ impl Controller {
     pub fn abort(&mut self) {
         match self.watcher.lock().unwrap().app_state {
             AppState::Listening => self.net_controller.abort_server(),
-            AppState::Accepting | AppState::Sending => self.net_controller.abort_task(),
+            AppState::Accepting | AppState::Sending | AppState::Connecting | AppState::Handshake => self.net_controller.abort_task(),
             _ => {}
         }
     }

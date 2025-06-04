@@ -41,8 +41,7 @@ pub enum NetCommand {
 impl NetController {
     pub fn new() -> NetController {
         let rt = Builder::new_multi_thread().enable_all().build().unwrap();
-        
-        
+
         NetController {
             runtime: Some(rt),
             worker: None,
@@ -54,8 +53,6 @@ impl NetController {
     pub fn start(&mut self, cmd: NetCommand) -> UnboundedReceiver<AppEvent> {
         let (tx, rx) = mpsc::unbounded_channel();
 
-        let server_token = CancellationToken::new();
-
         match cmd {
             NetCommand::Send(addr, file_info) => {
                 let task_token = CancellationToken::new();
@@ -63,7 +60,7 @@ impl NetController {
                 self.task_token
                     .lock()
                     .unwrap()
-                    .replace(server_token.clone());
+                    .replace(task_token.clone());
 
                 let futures_rewritten = self.runtime.as_ref().unwrap().spawn(Self::send(
                     tx,
@@ -76,11 +73,13 @@ impl NetController {
             }
 
             NetCommand::Receive(path, port) => {
+                let server_token = CancellationToken::new();
+                let task_token = CancellationToken::new();
                 self.server_token = Some(server_token.clone());
                 self.task_token
                     .lock()
                     .unwrap()
-                    .replace(server_token.clone());
+                    .replace(task_token.clone());
 
                 let futures_rewritten = self.runtime.as_ref().unwrap().spawn(Self::listen(
                     tx,
@@ -102,7 +101,7 @@ impl NetController {
 
     pub fn abort_server(&mut self) {
         self.server_token.take().unwrap().cancel();
-        self.task_token.lock().unwrap().take();
+        self.task_token.lock().unwrap().take().unwrap().cancel();
     }
 
     async fn listen(
@@ -116,7 +115,7 @@ impl NetController {
         let listener = TcpListener::bind(addr).await.unwrap();
         tx.send(AppEvent::AppState(Listening)).unwrap();
         // todo: get a macro for logging
-        
+
         log!(tx, "Listening on port {}...", addr.port());
 
         let task_token = CancellationToken::new();
@@ -125,7 +124,7 @@ impl NetController {
         // todo: actually put it inside of
 
         loop {
-            tokio::select! {
+            select! {
                 _ = server_token.cancelled() => {
                     let _ = tx.send(AppEvent::AppState(Idle));
                     log!(tx, "Listener shut down.");
@@ -167,7 +166,7 @@ impl NetController {
                 .write(b"NO, SIRE.")
                 .await
                 .expect("Couldn't write to stream");
-            
+
             log!(tx, "You don't have enough space for the incoming file.");
             return;
         }
@@ -186,50 +185,48 @@ impl NetController {
         let mut file_info = file_info.clone();
         let mut file_handle = File::open(file_info.path.as_ref().unwrap()).unwrap();
         file_info.hash = Some(Self::hash_file(&mut file_handle));
-        
-        // todo: maybe make it possible to abort waiting on a connection (later) 
-        // I hate writing selects :(
-        
-        let fuck_you = Builder::new_multi_thread().enable_all().build().unwrap();
-        
+        log!(tx, "Attempting to establish TCP connection to {}...", addr);
+        // todo: is it possible to abort waiting on a connection??????? we just don't know!!!!!
+        // UPD: yes
+
         loop {
             select! {
                 _ = task_token.cancelled() => {
                     let _ = tx.send(AppEvent::AppState(Idle));
-                    log!(tx, "Connection closed manually by user.");
+                    log!(tx, "Connection aborted manually by user.");
                     break;
                 }
-                
-                _ = timeout(Duration::from_secs(2), Self::handle_send_request(tx.clone(),
-                task_token.clone(), addr, file_info)) => {
-                    let _ = tx.send(AppEvent::AppState(Idle));
-                    log!(tx, "Connection handled owo?");
-                    break;
+
+                conn = TcpStream::connect(addr) => {
+                    match conn {
+                        Ok(stream) => {
+                            Self::handle_send_request(stream, tx.clone(), task_token.clone(), addr, file_info).await;
+
+                            let _ = tx.send(AppEvent::AppState(Idle));
+                            log!(tx, "Connection handled owo?");
+                            break;
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppEvent::AppState(Idle));
+                            log!(tx, "Connection closed with error: {}", e);
+                            break;
+                        }
+                    }
                 }
             }
         }
     }
-    
-    async fn handle_send_request(tx: UnboundedSender<AppEvent>,
-                                 cancel_token: CancellationToken,
-                                 addr: SocketAddrV4, 
-                                 file_info: FileInfo) {
-        // todo: sending future
-        // I took it out so I can cancel the task at any time with a select
 
-        let stream = TcpStream::connect(addr).await;
-
-        if let Err(e) = stream {
-            tx.send(AppEvent::Error(EelError::ConnectionError(e.to_string()))).unwrap();
-            tx.send(AppEvent::AppState(Idle)).unwrap();
-            return;
-        }
-
+    async fn handle_send_request(
+        mut stream: TcpStream,
+        tx: UnboundedSender<AppEvent>,
+        cancel_token: CancellationToken,
+        addr: SocketAddrV4,
+        file_info: FileInfo,
+    ) {
+        log!(tx, "A second function has hit the stack");
         tx.send(AppEvent::AppState(Handshake)).unwrap();
-
         let file_info_serialized = serde_json::to_string(&file_info).unwrap();
-        let mut stream = stream.unwrap();
-
         stream.write(file_info_serialized.as_bytes()).await.unwrap();
 
         // todo: actual file sending after getting a response

@@ -21,7 +21,7 @@ fn main() -> eframe::Result {
             
             let watcher = Arc::new(Mutex::new(EelWatcher::new()));
             
-            watcher.lock().unwrap().log("Welcom to EELFILE™ :)");
+            watcher.lock().unwrap().log("Welcome to EELFILE™ 🐍");
             
             let controller = Controller::new(cc.egui_ctx.clone(), watcher.clone());
             let ui_frame = ui_app::UiApp::new(controller, watcher.clone());
