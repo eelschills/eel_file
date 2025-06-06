@@ -6,6 +6,7 @@ pub enum EelError {
     PermissionError(String),
     ConnectionError(String),
     InvalidIP(String),
+    FileCreationError(String),
 }
 
 impl std::fmt::Display for EelError {
@@ -17,6 +18,7 @@ impl std::fmt::Display for EelError {
             EelError::PermissionError(err) => write!(f, "Permission error: {}", err),
             EelError::ConnectionError(err) => write!(f, "Connection error, server is either unreachable or connection was refused: {}", err),
             EelError::InvalidIP(err) => write!(f, "Invalid IP: {}", err),
+            EelError::FileCreationError(err) => write!(f, "Failed to create file: {}", err),
         }
     }
 }

@@ -13,7 +13,7 @@ fn main() -> eframe::Result {
     let options = get_options();
 
     eframe::run_native(
-        "EELFILE™ v0.1.6",
+        "EELFILE™ v0.1.7",
         options,
         Box::new(|cc| {
             // This gives us image support:

@@ -8,7 +8,7 @@ pub mod eel_error;
 pub mod eel_log;
 
 pub use eel_error::*;
-
+#[derive(PartialEq)]
 pub enum AppState {
     Idle,
     Listening,
@@ -43,7 +43,6 @@ pub enum AppEvent {
 pub struct FileInfo {
     pub path: Option<PathBuf>,
     pub size: u64,
-    pub hash: Option<Vec<u8>>,
     pub name: String,
     pub sender_addr: Option<SocketAddr>
 }
@@ -54,7 +53,6 @@ impl Default for FileInfo {
         let a = FileInfo {
             path: None,
             size: 0,
-            hash: None,
             name: "testfile".to_string(),
             sender_addr: None
         };
@@ -74,6 +72,6 @@ bitflags! {
         const receive_ip_valid = 0b0001_0000;
         const send_port_valid = 0b0010_0000;
         const receive_port_valid = 0b0100_0000;
-        const reserved = 0b1000_0000;
+        const listen_dir_valid = 0b1000_0000;
     }
 }

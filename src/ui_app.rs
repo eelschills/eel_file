@@ -1,12 +1,11 @@
-use std::fs::File;
+use std::fs::{remove_file, File, OpenOptions};
 use crate::controller::Controller;
 use eel_file::{AppState, EelFlags, FileInfo};
 use eframe::egui;
-use eframe::egui::{RichText, ScrollArea, TextEdit, Ui, ViewportCommand};
+use eframe::egui::{Button, ScrollArea, TextEdit, Ui, ViewportCommand};
 use rfd::FileDialog;
 use std::net::{AddrParseError, Ipv4Addr, SocketAddrV4};
 use std::num::ParseIntError;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration};
@@ -19,8 +18,6 @@ pub struct UiApp {
     selected_file_path: Option<PathBuf>,
     receive_dir_str: String,
     receive_dir_path: Option<PathBuf>,
-    receive_ip: Option<Ipv4Addr>,
-    receive_ip_str: String,
     send_ip: Option<Ipv4Addr>,
     send_ip_str: String,
     password: String,
@@ -84,9 +81,7 @@ impl UiApp {
             selected_file_str: String::new(),
             receive_dir_path: None,
             receive_dir_str: String::new(),
-            receive_ip: None,
             send_ip_str: String::new(),
-            receive_ip_str: String::new(),
             send_ip: None,
             password: String::new(),
             port_send_str: String::new(),
@@ -170,9 +165,8 @@ impl UiApp {
                         Ok(ip) => {
                             self.flags.insert(EelFlags::send_ip_valid);
                             self.send_ip = Some(ip);
-                            println!("IP valid!");
                         }
-                        Err(e) => {
+                        Err(_) => {
                             self.flags.remove(EelFlags::send_ip_valid);
                             self.send_ip = None;
                         }
@@ -216,7 +210,7 @@ impl UiApp {
         
         ui.add_space(0.5);
         
-        if ui.add_enabled(send_button_enabled, egui::Button::new("SEND")).clicked() {
+        if ui.add_enabled(send_button_enabled, Button::new("SEND")).clicked() {
             let socket = SocketAddrV4::new(self.send_ip.unwrap(), self.port_send.unwrap());
             self.controller.send(socket, self.file_info.clone().unwrap());
         }
@@ -241,6 +235,10 @@ impl UiApp {
                     self.receive_dir_str = text_path.to_owned();
                     resp.mark_changed();
                 }
+            }
+            
+            if resp.changed() {
+                self.validate_listen_dir();
             }
         });
         
@@ -283,23 +281,37 @@ impl UiApp {
         });
 
         ui.add_space(0.5);
-
-        if ui.add_enabled(self.flags.contains(EelFlags::receive_port_valid), egui::Button::new("LISTEN")).clicked() {
-            self.controller.listen(PathBuf::from("C:\\eelfile"), self.port_recv.unwrap());
+        
+        let listen_button_enabled = {
+            let valid_listen_settings: EelFlags = EelFlags::receive_port_valid | EelFlags::listen_dir_valid;
+            self.flags.contains(valid_listen_settings)
+        };
+        
+        // todo: validation of reception folder
+        if ui.add_enabled(listen_button_enabled, Button::new("LISTEN")).clicked() {
+            self.controller.listen(self.receive_dir_path.clone().unwrap(), self.port_recv.unwrap());
         }
 
     }
 
     fn draw_status_ui(&mut self, ui: &mut Ui) {
+        let stop_enabled = {
+            let app_state = &self.logger.lock().unwrap().app_state;
+               *app_state != AppState::Idle && *app_state != AppState::Handshake
+        };
+        
         ui.heading("Status");
 
         ui.label(format!("{}", self.status_message));
+        
+        self.progress = self.logger.lock().unwrap().progress;
 
         ui.add(egui::ProgressBar::new(self.progress));
 
         ui.horizontal(|ui| {
-            ui.label(format!("Progress: {}%", (self.progress * 100.0).round()));
-            if ui.button("SOTP").clicked() {
+            ui.label(format!("Progress: {}%", (self.progress).round()));
+            
+            if ui.add_enabled(stop_enabled, Button::new("SOTP")).clicked() {
                 self.controller.abort();
             }
         });
@@ -307,6 +319,7 @@ impl UiApp {
         let mut log_text = self.logger.lock().unwrap().messages.clone();
         ScrollArea::vertical()
             .auto_shrink([false; 2])
+            .stick_to_bottom(true)
             .show(ui, |ui| {
                 ui.add(
                     TextEdit::multiline(&mut log_text)
@@ -344,7 +357,6 @@ impl UiApp {
         FileInfo {
             path: Some(path.clone()),
             size,
-            hash: None,
             name,
             sender_addr: None,
         }
@@ -352,5 +364,26 @@ impl UiApp {
 
     fn check_ip(ip: &String) -> Result<Ipv4Addr, AddrParseError> {
         Ok(ip.parse::<Ipv4Addr>()?)
+    }
+
+    fn validate_listen_dir(&mut self) {
+        match &self.receive_dir_path {
+            None => { self.flags.remove(EelFlags::listen_dir_valid); },
+            Some(path) => {
+                if path.is_dir() {
+                    let test_file = path.join(".permission_test");
+                    match OpenOptions::new().write(true).create_new(true).open(&test_file) {
+                        Ok(_) => {
+                            // Clean up the test file immediately
+                            let _ = remove_file(test_file);
+                            self.flags.insert(EelFlags::listen_dir_valid);
+                        }
+                        Err(_) => self.flags.remove(EelFlags::listen_dir_valid),
+                    }
+                } else {
+                    self.flags.remove(EelFlags::listen_dir_valid);
+                }
+            }
+        }
     }
 }
