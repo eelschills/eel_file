@@ -309,7 +309,7 @@ impl UiApp {
         ui.add(egui::ProgressBar::new(self.progress));
 
         ui.horizontal(|ui| {
-            ui.label(format!("Progress: {}%", (self.progress).round()));
+            ui.label(format!("Progress: {}%", (self.progress * 100.0).round()));
             
             if ui.add_enabled(stop_enabled, Button::new("SOTP")).clicked() {
                 self.controller.abort();

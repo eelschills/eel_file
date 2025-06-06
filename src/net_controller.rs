@@ -1,7 +1,6 @@
 use eel_file::AppState::*;
-use eel_file::{AppEvent, EelError, FileInfo};
-use sha2::{Digest, Sha256};
-use std::io::{Error, ErrorKind, Read};
+use eel_file::{AppEvent, FileInfo};
+use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -105,7 +104,16 @@ impl NetController {
         port: u16,
     ) {
         let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
-        let listener = TcpListener::bind(addr).await.unwrap();
+        let listener = TcpListener::bind(addr).await;
+
+        if let Err(_) = listener {
+            let _ = tx.send(AppEvent::AppState(Idle));
+            log!(tx, "Could not listen: port most likely already in use.");
+            return;
+        }
+
+        let listener = listener.unwrap();
+
         tx.send(AppEvent::AppState(Listening)).unwrap();
         // todo: get a macro for logging
 
@@ -128,8 +136,10 @@ impl NetController {
                     let _ = tx.send(AppEvent::AppState(Handshake));
                     log!(tx, "Accepted connection from {}", addr);
                     // if in the future I want to listen to new connections and tell them to fuck off, this is where I'd do it
-                    Self::handle_rx_stream(stream, addr, task_token.clone(), path.clone(), tx.clone()).await;
+                    Self::handle_rx_stream(stream, task_token.clone(), path.clone(), tx.clone()).await;
                     log!(tx, "Communication ended with {}, returning to listening.", addr);
+                    let task_token = CancellationToken::new();
+                    task_token_ref.lock().unwrap().replace(task_token.clone());
                     let _ = tx.send(AppEvent::AppState(Listening));
                 }
             }
@@ -138,7 +148,6 @@ impl NetController {
 
     async fn handle_rx_stream(
         mut stream: TcpStream,
-        addr: SocketAddr,
         shutdown_token: CancellationToken,
         destination_path_buf: PathBuf,
         tx: UnboundedSender<AppEvent>,
@@ -248,7 +257,7 @@ impl NetController {
                             // todo: better error handling? this is gonna crash but it shouldn't really happen since I'm checking for permissions
                             file_handle.write_all(&buffer[..bytes]).await.expect("Couldn't write to file");
                             remaining_size -= bytes as u64;
-                            tx.send(AppEvent::Progress(100.0 - ((remaining_size as f32 / size as f32) * 100.0))).unwrap();
+                            tx.send(AppEvent::Progress(1.0 - (remaining_size as f32 / file_info.size as f32))).unwrap();
 
                             if remaining_size == 0 {
                                 log!(tx, "File transfer supposedly complete.");
@@ -261,7 +270,7 @@ impl NetController {
                             continue;
                         }
 
-                        Err(e) => {
+                        Err(_) => {
                             log!(tx, "Connection was unexpectedly terminated!");
                             break;
                         }
@@ -291,10 +300,9 @@ impl NetController {
                 conn = TcpStream::connect(addr) => {
                     match conn {
                         Ok(stream) => {
-                            Self::handle_send_request(stream, tx.clone(), task_token.clone(), addr, file_info).await;
+                            Self::handle_send_request(stream, tx.clone(), task_token.clone(), file_info).await;
 
                             let _ = tx.send(AppEvent::AppState(Idle));
-                            log!(tx, "Connection handled owo?");
                             break;
                         }
                         Err(e) => {
@@ -312,16 +320,12 @@ impl NetController {
         mut stream: TcpStream,
         tx: UnboundedSender<AppEvent>,
         cancel_token: CancellationToken,
-        addr: SocketAddrV4,
         file_info: FileInfo,
     ) {
-        log!(tx, "A second function has hit the stack");
         tx.send(AppEvent::AppState(Handshake)).unwrap();
         let file_info_serialized = serde_json::to_string(&file_info).unwrap();
         stream.write(file_info_serialized.as_bytes()).await.unwrap();
         stream.write(b"\r\nITS OVER\r\n").await.unwrap();
-
-        // todo: actual file sending after getting a response
 
         let mut reader = BufReader::new(&mut stream);
         let mut response = String::new();
@@ -334,14 +338,17 @@ impl NetController {
                 log!(tx, "Received response: {}", response);
             }
             Err(_) => {
-                log!(tx, "Connection timeout elapsed!");
+                log!(tx, "Connection timeout elapsed! Aborting.");
+                tx.send(AppEvent::AppState(Idle)).unwrap();
                 return;
             }
         }
         
         match response.as_str() {
             "NO, SIRE." => {
-                log!(tx, "Remote EELFILE rejected the file for, as of now, vague reasons.");
+                log!(tx, "Remote EELFILE rejected the file for, as of now, vague reasons. Probably not enough space?");
+                tx.send(AppEvent::AppState(Idle)).unwrap();
+                return;
             } 
             _ => {
                 log!(tx, "Affirmative remote response received! Attempting to start transfer.");
@@ -362,11 +369,13 @@ impl NetController {
                 read = file.read(&mut buffer) => {
                     if let Err(e) = read {
                         log!(tx, "Error reading file. Aborting connection. Error: {}", e);
+                        tx.send(AppEvent::AppState(Idle)).unwrap();
                         break;
                     }
 
                     let bytes = read.unwrap();
                     if bytes == 0 {
+                        tx.send(AppEvent::AppState(Idle)).unwrap();
                         log!(tx, "Funny EOF error. This should never happen (it always does when I write this.");
                     }
 
@@ -374,14 +383,15 @@ impl NetController {
                     
                     // todo: if the other end drops connection this freezes as it waits
                     let write_result = stream.write_all(&buffer[..to_write]).await;
-                    
+
                     if let Err(e) = write_result {
+                        tx.send(AppEvent::AppState(Idle)).unwrap();
                         log!(tx, "Connection to remote host closed unexpectedly. Aborting. Error: {}", e);
                         break;
                     }
-                    
+
                     remaining_size -= to_write as u64;
-                    tx.send(AppEvent::Progress(100.0 - ((remaining_size as f32 / file_info.size as f32) * 100.0))).unwrap();
+                    tx.send(AppEvent::Progress(1.0 - (remaining_size as f32 / file_info.size as f32))).unwrap();
             }
         }
     }
@@ -407,7 +417,6 @@ impl NetController {
     // I wish I could test it on some other device but oh well
     // also it will just give me a false even if there's an error or there are no matching drives
     // this is also not portable to other OSs, not that I care
-    // todo: re-evaluate this
     fn is_enough_space(path: &PathBuf, filesize: u64) -> bool {
         let mut volume = path.to_str().unwrap()[0..2].to_string();
         volume.push_str("\\");
