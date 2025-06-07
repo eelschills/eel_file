@@ -90,7 +90,7 @@ impl UiApp {
             port_recv: None,
             progress: 0.0,
             logger,
-            status_message: "Selected file: N\\A, size (in bytes lol): N\\A".to_string(),
+            status_message: "Selected file: N\\A, size: N\\A".to_string(),
             file_info: None,
             flags: EelFlags::empty(),
         }

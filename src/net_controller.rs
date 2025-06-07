@@ -352,6 +352,7 @@ impl NetController {
             } 
             _ => {
                 log!(tx, "Affirmative remote response received! Attempting to start transfer.");
+                tx.send(AppEvent::AppState(Sending)).unwrap();
             }
         }
 

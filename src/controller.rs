@@ -71,6 +71,7 @@ impl Controller {
                         AppEvent::Progress(progress) => {
                             watcher.lock().unwrap().progress = progress;
                         }
+                        
                         AppEvent::StatusMessage(loggie) => {
                             watcher.lock().unwrap().log(&loggie);
                         }
