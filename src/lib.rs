@@ -8,7 +8,7 @@ pub mod eel_error;
 pub mod eel_log;
 
 pub use eel_error::*;
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub enum AppState {
     Idle,
     Listening,
@@ -31,6 +31,27 @@ impl std::fmt::Display for AppState {
     }
 }
 
+pub struct Util {}
+
+impl Util {
+    pub fn display_size(size: u64) -> String {
+        const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+        let mut unit = 0;
+        let mut size = size as f64;
+
+        while size >= 1024.0 && unit < UNITS.len() - 1 {
+            size /= 1024.0;
+            unit += 1;
+        }
+
+        if unit == 0 {
+            format!("{} {}", size, UNITS[unit])
+        } else {
+            format!("{:.2} {}", size, UNITS[unit])
+        }
+    }
+}
+
 pub enum AppEvent {
     AppState(AppState),
     FileInfo(FileInfo),
@@ -45,22 +66,6 @@ pub struct FileInfo {
     pub size: u64,
     pub name: String,
     pub sender_addr: Option<SocketAddr>
-}
-
-// for testing porpoises
-impl Default for FileInfo {
-    fn default() -> FileInfo {
-        let a = FileInfo {
-            path: None,
-            size: 0,
-            name: "testfile".to_string(),
-            sender_addr: None
-        };
-
-        let json = serde_json::to_string(&a).unwrap();
-        println!("{}", json);
-        a
-    }
 }
 
 bitflags! {

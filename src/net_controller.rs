@@ -1,5 +1,5 @@
 use eel_file::AppState::*;
-use eel_file::{AppEvent, FileInfo};
+use eel_file::{AppEvent, FileInfo, Util};
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
@@ -122,7 +122,6 @@ impl NetController {
         let task_token = CancellationToken::new();
 
         task_token_ref.lock().unwrap().replace(task_token.clone());
-        // todo: actually put it inside of
 
         loop {
             select! {
@@ -158,11 +157,9 @@ impl NetController {
         let mut metadata = String::new();
 
         while let Some(line) = metadata_lines.next_line().await.unwrap() {
-            log!(tx, "Received line: {}", line);
             if line == "ITS OVER".to_string() {
                 break;
             }
-            log!(tx, "Appended this one.");
             metadata += &line;
         }
 
@@ -171,24 +168,27 @@ impl NetController {
         drop(buffer);
 
         let mut file_info: FileInfo = serde_json::from_str(&metadata).unwrap();
-        log!(tx, "Received file info: {:?}", file_info);
+        log!(tx, "Received file info. Name: {}, size: {}", file_info.name, Util::display_size(file_info.size));
+        
+        tx.send(AppEvent::FileInfo(file_info.clone())).unwrap();
 
         let mut file_to_create = destination_path_buf.clone();
         file_to_create.push(&file_info.name);
-        log!(tx, "Constructed file path: {:?}", file_to_create);
 
         file_info.path = Some(file_to_create);
 
         if !NetController::is_enough_space(&destination_path_buf, file_info.size) {
-            let _ = stream
+            let res = stream
                 .write(b"NO, SIRE.\r\n")
-                .await
-                .expect("Couldn't write to stream");
+                .await;
+            
+            if let Err(_) = res {
+                log!(tx, "Could not write to stream. This is HIGHLY unlikely at this point. :)");
+                tx.send(AppEvent::AppState(Idle)).unwrap();
+                return;
+            }
 
-            log!(
-                tx,
-                "You don't have enough space for the incoming file. Connection aborted."
-            );
+            log!(tx, "You don't have enough space for the incoming file. Connection aborted.");
             return;
         }
 

@@ -1,6 +1,6 @@
 use std::fs::{remove_file, File, OpenOptions};
 use crate::controller::Controller;
-use eel_file::{AppState, EelFlags, FileInfo};
+use eel_file::{AppState, EelFlags, FileInfo, Util};
 use eframe::egui;
 use eframe::egui::{Button, ScrollArea, TextEdit, Ui, ViewportCommand};
 use rfd::FileDialog;
@@ -8,7 +8,6 @@ use std::net::{AddrParseError, Ipv4Addr, SocketAddrV4};
 use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration};
 use eel_file::eel_log::EelWatcher;
 
 pub struct UiApp {
@@ -28,7 +27,9 @@ pub struct UiApp {
     progress: f32,
     status_message: String,
     logger: Arc<Mutex<EelWatcher>>,
-    flags: EelFlags
+    flags: EelFlags,
+    current_state: AppState,
+    prev_state: AppState,
 }
 
 impl eframe::App for UiApp {
@@ -61,14 +62,19 @@ impl eframe::App for UiApp {
                         });
                     });
             }
-
+            
+            self.current_state = self.logger.lock().unwrap().app_state.clone();
+            
             self.draw_sender_ui(ui);
             ui.separator();
             self.draw_receiver_ui(ui);
             ui.separator();
             self.draw_status_ui(ui);
             ui.allocate_space(ui.available_size());
-            ctx.request_repaint_after(Duration::from_secs(1));
+            // why was that there?? very mysterious
+            // ctx.request_repaint_after(Duration::from_secs(1));
+
+            self.prev_state = self.logger.lock().unwrap().app_state.clone();
         });
     }
 }
@@ -90,9 +96,11 @@ impl UiApp {
             port_recv: None,
             progress: 0.0,
             logger,
-            status_message: "Selected file: N\\A, size: N\\A".to_string(),
+            status_message: "Transferred file: N\\A, size: N\\A".to_string(),
             file_info: None,
             flags: EelFlags::empty(),
+            current_state: AppState::Idle,
+            prev_state: AppState::Idle
         }
     }
 
@@ -126,14 +134,12 @@ impl UiApp {
                         Ok(file) => {
                             self.flags.insert(EelFlags::file_valid);
                             let metadata = UiApp::generate_metadata(&file, self.selected_file_path.clone().unwrap());
-                            self.status_message = format!("Selected file: {}, size (in bytes lol): {}", metadata.name, metadata.size).as_str().parse().unwrap();
                             self.file_info = Some(metadata);
                         }
                         Err(_) => {
                             let fmt_path = "The current file selection is not valid.".to_string();
                             ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
                             self.flags.remove(EelFlags::file_valid);
-                            self.status_message = "Selected file: N\\A, size (in bytes lol): N\\A".to_string();
                             self.file_info = None;
                         }
                     }
@@ -142,10 +148,7 @@ impl UiApp {
         });
 
         // this needs to update the path buffer from the typed line if there's been any manual changes
-        let fmt_path = format!(
-            "DEBUG: Current app state: {}",
-            self.logger.lock().unwrap().app_state
-        );
+        let fmt_path = format!("DEBUG: Current app state: {}", self.current_state);
         ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
         
         let send_button_enabled = {
@@ -204,7 +207,7 @@ impl UiApp {
 
             ui.vertical(|ui| {
                 ui.label("Password:");
-                ui.add_enabled(self.idle_check(), TextEdit::singleline(&mut self.password));
+                ui.add_enabled(false, TextEdit::singleline(&mut self.password));
             });
         });
         
@@ -273,7 +276,7 @@ impl UiApp {
                 ui.label("Password:");
 
                 ui.add_enabled(
-                    self.idle_check(),
+                    false,
                     // this is shit and awfully specific, if I weren't lazy, I'd do it with the layout
                     TextEdit::singleline(&mut self.password).desired_width(213.0),
                 );
@@ -284,7 +287,7 @@ impl UiApp {
         
         let listen_button_enabled = {
             let valid_listen_settings: EelFlags = EelFlags::receive_port_valid | EelFlags::listen_dir_valid;
-            self.flags.contains(valid_listen_settings)
+            self.flags.contains(valid_listen_settings) && self.current_state == AppState::Idle
         };
         
         // todo: validation of reception folder
@@ -301,6 +304,8 @@ impl UiApp {
         };
         
         ui.heading("Status");
+        
+        self.reparse_status_message();
 
         ui.label(format!("{}", self.status_message));
         
@@ -311,7 +316,7 @@ impl UiApp {
         ui.horizontal(|ui| {
             ui.label(format!("Progress: {}%", (self.progress * 100.0).round()));
             
-            if ui.add_enabled(stop_enabled, Button::new("SOTP")).clicked() {
+            if ui.add_enabled(stop_enabled, Button::new("ABORT")).clicked() {
                 self.controller.abort();
             }
         });
@@ -383,6 +388,26 @@ impl UiApp {
                 } else {
                     self.flags.remove(EelFlags::listen_dir_valid);
                 }
+            }
+        }
+    }
+
+    fn reparse_status_message(&mut self) {
+        // bad
+        if (self.current_state == AppState::Accepting || self.current_state == AppState::Sending) 
+            && (self.prev_state != AppState::Accepting || self.prev_state != AppState::Sending) {
+            
+            match self.current_state {
+                AppState::Accepting => {
+                    let metadata = self.logger.lock().unwrap().metadata.clone().unwrap();
+                    self.status_message = format!("Accepting file: {}, size: {}", metadata.name, Util::display_size(metadata.size));
+                }
+                
+                AppState::Sending => {
+                    let file_info_ref = self.file_info.as_ref().unwrap();
+                    self.status_message = format!("Sending file: {}, size: {}", file_info_ref.name, Util::display_size(file_info_ref.size));
+                }
+                _ => {}
             }
         }
     }
