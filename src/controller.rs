@@ -15,7 +15,6 @@ pub struct Controller {
 
 impl Controller {
     pub fn new(ui_context: egui::Context, logger: Arc<Mutex<EelWatcher>>) -> Controller {
-        // todo: lel fix this trash
         Controller {
             net_controller: NetController::new(),
             ui_context,
@@ -24,7 +23,6 @@ impl Controller {
     }
 
     pub fn listen(&mut self, path: PathBuf, port: u16) {
-        // todo: add None check
         let task_receiver = self
             .net_controller
             .start(super::net_controller::NetCommand::Receive(path, port));
@@ -76,8 +74,8 @@ impl Controller {
                             watcher.lock().unwrap().log(&loggie);
                         }
                         
-                        AppEvent::Error(err) => {
-                            watcher.lock().unwrap().log(format!("ERROR: {}", err).as_str());
+                        AppEvent::Animate(animation) => {
+                            watcher.lock().unwrap().animation = animation;
                         }
                     }
 

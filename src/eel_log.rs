@@ -1,11 +1,12 @@
 use chrono::Local;
-use crate::{AppState, FileInfo};
+use crate::{Animation, AppState, FileInfo};
 
 pub struct EelWatcher {
     pub app_state: AppState,
     pub messages: String,
     pub progress: f32,
-    pub metadata: Option<FileInfo>
+    pub metadata: Option<FileInfo>,
+    pub animation: Animation,
 }
 
 impl EelWatcher {
@@ -15,6 +16,7 @@ impl EelWatcher {
             messages: String::new(),
             progress: 0.0,
             metadata: None,
+            animation: Animation::Idle,
         }
     }
     

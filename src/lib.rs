@@ -1,8 +1,7 @@
-use std::net::SocketAddr;
-use std::path::PathBuf;
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
-use serde_json;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 
 pub mod eel_error;
 pub mod eel_log;
@@ -15,7 +14,7 @@ pub enum AppState {
     Handshake,
     Accepting,
     Sending,
-    Connecting
+    Connecting,
 }
 
 impl std::fmt::Display for AppState {
@@ -57,7 +56,19 @@ pub enum AppEvent {
     FileInfo(FileInfo),
     Progress(f32),
     StatusMessage(String),
-    Error(EelError),
+    Animate(Animation),
+}
+#[derive(PartialEq, Clone)]
+pub enum Animation {
+    Idle,
+    IdleAfterError,
+    IdleAfterSuccess,
+    Listening,
+    Handshake,
+    Accepting,
+    Sending,
+    Connecting,
+    ConnectingStatic
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -65,7 +76,7 @@ pub struct FileInfo {
     pub path: Option<PathBuf>,
     pub size: u64,
     pub name: String,
-    pub sender_addr: Option<SocketAddr>
+    pub sender_addr: Option<SocketAddr>,
 }
 
 bitflags! {

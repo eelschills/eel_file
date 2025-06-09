@@ -1,14 +1,27 @@
-use std::fs::{remove_file, File, OpenOptions};
 use crate::controller::Controller;
-use eel_file::{AppState, EelFlags, FileInfo, Util};
+use eel_file::eel_log::EelWatcher;
+use eel_file::{Animation, AppState, EelFlags, FileInfo, Util};
 use eframe::egui;
-use eframe::egui::{Button, ScrollArea, TextEdit, Ui, ViewportCommand};
+use eframe::egui::load::Bytes;
+use eframe::egui::{Button, ImageSource, ScrollArea, TextEdit, Ui, ViewportCommand};
 use rfd::FileDialog;
+use std::borrow::Cow;
+use std::fs::{remove_file, File, OpenOptions};
 use std::net::{AddrParseError, Ipv4Addr, SocketAddrV4};
 use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use eel_file::eel_log::EelWatcher;
+use std::time::Instant;
+
+const IDLE: &[u8] = include_bytes!("../assets/status_icons/idle.gif");
+const ACCEPTING: &[u8] = include_bytes!("../assets/status_icons/accepting.gif");
+const CONNECTING_ANIM: &[u8] = include_bytes!("../assets/status_icons/connecting_anim.gif");
+const CONNECTING_STATIC: &[u8] = include_bytes!("../assets/status_icons/connecting_static.png");
+const HANDSHAKE: &[u8] = include_bytes!("../assets/status_icons/handshake.png");
+const IDLE_ERROR: &[u8] = include_bytes!("../assets/status_icons/idle_error.gif");
+const IDLE_SUCCESS: &[u8] = include_bytes!("../assets/status_icons/idle_success.png");
+const LISTENING: &[u8] = include_bytes!("../assets/status_icons/listening.gif");
+const SENDING: &[u8] = include_bytes!("../assets/status_icons/sending.gif");
 
 pub struct UiApp {
     controller: Controller,
@@ -30,6 +43,7 @@ pub struct UiApp {
     flags: EelFlags,
     current_state: AppState,
     prev_state: AppState,
+    animation_manager: AnimationManager
 }
 
 impl eframe::App for UiApp {
@@ -62,17 +76,15 @@ impl eframe::App for UiApp {
                         });
                     });
             }
-            
+
             self.current_state = self.logger.lock().unwrap().app_state.clone();
-            
+
             self.draw_sender_ui(ui);
             ui.separator();
             self.draw_receiver_ui(ui);
             ui.separator();
             self.draw_status_ui(ui);
             ui.allocate_space(ui.available_size());
-            // why was that there?? very mysterious
-            // ctx.request_repaint_after(Duration::from_secs(1));
 
             self.prev_state = self.logger.lock().unwrap().app_state.clone();
         });
@@ -100,7 +112,8 @@ impl UiApp {
             file_info: None,
             flags: EelFlags::empty(),
             current_state: AppState::Idle,
-            prev_state: AppState::Idle
+            prev_state: AppState::Idle,
+            animation_manager: AnimationManager::new(),
         }
     }
 
@@ -146,10 +159,9 @@ impl UiApp {
                 }
             }
         });
-
-        // this needs to update the path buffer from the typed line if there's been any manual changes
-        let fmt_path = format!("DEBUG: Current app state: {}", self.current_state);
-        ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
+        
+        // let fmt_path = format!("DEBUG: Current app state: {}", self.current_state);
+        // ui.label(egui::RichText::new(fmt_path).color(egui::Color32::from_rgb(200, 10, 20)));
         
         let send_button_enabled = {
             // hmmmmmm
@@ -302,13 +314,17 @@ impl UiApp {
             let app_state = &self.logger.lock().unwrap().app_state;
                *app_state != AppState::Idle && *app_state != AppState::Handshake
         };
-        
-        ui.heading("Status");
-        
-        self.reparse_status_message();
 
+        // ui.heading("Status");
+
+        ui.add(
+            egui::Image::new(self.animation_manager.get_image_source(self.logger.lock().unwrap().animation.clone()))
+                .fit_to_original_size(1.0)
+        );
+
+        self.reparse_status_message();
         ui.label(format!("{}", self.status_message));
-        
+
         self.progress = self.logger.lock().unwrap().progress;
 
         ui.add(egui::ProgressBar::new(self.progress));
@@ -392,22 +408,137 @@ impl UiApp {
         }
     }
 
+
+
     fn reparse_status_message(&mut self) {
         // bad
-        if (self.current_state == AppState::Accepting || self.current_state == AppState::Sending) 
+        if (self.current_state == AppState::Accepting || self.current_state == AppState::Sending)
             && (self.prev_state != AppState::Accepting || self.prev_state != AppState::Sending) {
-            
+
             match self.current_state {
                 AppState::Accepting => {
                     let metadata = self.logger.lock().unwrap().metadata.clone().unwrap();
                     self.status_message = format!("Accepting file: {}, size: {}", metadata.name, Util::display_size(metadata.size));
                 }
-                
+
                 AppState::Sending => {
                     let file_info_ref = self.file_info.as_ref().unwrap();
                     self.status_message = format!("Sending file: {}, size: {}", file_info_ref.name, Util::display_size(file_info_ref.size));
                 }
                 _ => {}
+            }
+        }
+    }
+
+
+}
+
+struct AnimationManager {
+    timer_start: Instant,
+    prev_animation: Animation
+}
+
+impl AnimationManager {
+    pub fn new() -> AnimationManager {
+        AnimationManager {
+            timer_start: Instant::now(),
+            prev_animation: Animation::Idle
+        }
+    }
+
+    pub fn get_image_source(&mut self, new_animation: Animation) -> impl Into<ImageSource<'static>> {
+        if new_animation != self.prev_animation {
+            // if it's a newly incoming "special" idle, reset the internal timer
+            if new_animation == Animation::IdleAfterError || new_animation == Animation::IdleAfterSuccess || new_animation == Animation::Connecting {
+                self.timer_start = Instant::now();
+            }
+            self.prev_animation = new_animation.clone();
+            Self::get_animation(new_animation)
+        } else {
+            if new_animation == Animation::IdleAfterSuccess 
+                || new_animation == Animation::IdleAfterError || new_animation == Animation::Connecting {
+                // todo: check duration and return what's needed
+                self.prev_animation = new_animation.clone();
+                match new_animation {
+                    Animation::IdleAfterSuccess => {
+                        return if self.measure_time_dif() > 2000 {
+                            // the animation ended
+                            Self::get_animation(Animation::Idle)
+                        } else {
+                            Self::get_animation(Animation::IdleAfterSuccess)
+                        }
+                    }
+                    
+                    Animation::IdleAfterError => {
+                        return if self.measure_time_dif() > 3700 {
+                            // the animation ended
+                            Self::get_animation(Animation::Idle)
+                        } else {
+                            Self::get_animation(Animation::IdleAfterError)
+                        }
+                    }
+                    
+                    Animation::Connecting => {
+                        return if self.measure_time_dif() > 2000 {
+                            // the animation ended
+                            Self::get_animation(Animation::ConnectingStatic)
+                        } else {
+                            Self::get_animation(Animation::Connecting)
+                        }
+                    }
+                    
+                    _ => {  }
+                }
+                
+                Self::get_animation(new_animation)
+            } else {
+                Self::get_animation(new_animation)
+            }
+        }
+    }
+    
+    fn measure_time_dif(&self) -> u128 {
+        self.timer_start.elapsed().as_millis()
+    }
+
+    fn get_animation_source(id: &str, bytes: &'static [u8]) -> impl Into<ImageSource<'static>> {
+        ImageSource::Bytes {
+            uri: Cow::Owned(String::from(id)),
+            bytes: Bytes::Static(bytes),
+        }
+    }
+
+    // this is some yandere dev shit
+    // todo: rewrite
+    fn get_animation(animation: Animation) -> impl Into<ImageSource<'static>> {
+        
+        match animation {
+            Animation::Idle => {
+                Self::get_animation_source("idle", IDLE)
+            }
+            Animation::IdleAfterError => {
+                Self::get_animation_source("idle_err", IDLE_ERROR)
+            }
+            Animation::IdleAfterSuccess => {
+                Self::get_animation_source("idle_succ", IDLE_SUCCESS)
+            }
+            Animation::Listening => {
+                Self::get_animation_source("listening", LISTENING)
+            }
+            Animation::Handshake => {
+                Self::get_animation_source("handshake", HANDSHAKE)
+            }
+            Animation::Accepting => {
+                Self::get_animation_source("accepting", ACCEPTING)
+            }
+            Animation::Sending => {
+                Self::get_animation_source("sending", SENDING)
+            }
+            Animation::Connecting => {
+                Self::get_animation_source("connecting_anim", CONNECTING_ANIM)
+            }
+            Animation::ConnectingStatic => {
+                Self::get_animation_source("connecting_static", CONNECTING_STATIC)
             }
         }
     }

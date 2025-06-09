@@ -1,6 +1,6 @@
 [package]
 name = "eel_file"
-version = "0.1.7"
+version = "0.9.0"
 edition = "2024"
 build = "build.rs"
 
@@ -13,18 +13,17 @@ tokio-util = "0.7.15"
 eframe = { version = "0.31.1", features = [
     "default",
     "__screenshot"] }
-egui_extras = {  version = "0.31.1", features = ["default", "image"] }
+egui_extras = {  version = "0.31.1", features = ["default", "image", "gif"] }
 
 image = "0.25.6"
 rfd = "0.15.3"
 
 snow = "0.9.6"
 
-sha2 = "0.11.0-rc.0"
-hex-literal = "1.0.0"
 sysinfo = "0.35.1"
 chrono = "0.4.41"
 bitflags = "2.9.1"
+rand = "0.9.1"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

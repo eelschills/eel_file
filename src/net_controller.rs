@@ -1,5 +1,5 @@
 use eel_file::AppState::*;
-use eel_file::{AppEvent, FileInfo, Util};
+use eel_file::{Animation, AppEvent, FileInfo, Util};
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use eel_file::Animation::{IdleAfterError, IdleAfterSuccess};
 
 type CancelToken = Arc<Mutex<Option<CancellationToken>>>;
 
@@ -108,6 +109,7 @@ impl NetController {
 
         if let Err(_) = listener {
             let _ = tx.send(AppEvent::AppState(Idle));
+            let _ = tx.send(AppEvent::Animate(IdleAfterError));
             log!(tx, "Could not listen: port most likely already in use.");
             return;
         }
@@ -115,7 +117,7 @@ impl NetController {
         let listener = listener.unwrap();
 
         tx.send(AppEvent::AppState(Listening)).unwrap();
-        // todo: get a macro for logging
+        let _ = tx.send(AppEvent::Animate(Animation::Listening));
 
         log!(tx, "Listening on port {}...", addr.port());
 
@@ -127,12 +129,14 @@ impl NetController {
             select! {
                 _ = server_token.cancelled() => {
                     let _ = tx.send(AppEvent::AppState(Idle));
+                    let _ = tx.send(AppEvent::Animate(Animation::Idle));
                     log!(tx, "Listener shut down.");
                     break;
                 },
 
                 Ok((stream, addr)) = listener.accept() => {
                     let _ = tx.send(AppEvent::AppState(Handshake));
+                    let _ = tx.send(AppEvent::Animate(Animation::Handshake));
                     log!(tx, "Accepted connection from {}", addr);
                     // if in the future I want to listen to new connections and tell them to fuck off, this is where I'd do it
                     Self::handle_rx_stream(stream, task_token.clone(), path.clone(), tx.clone()).await;
@@ -140,6 +144,7 @@ impl NetController {
                     let task_token = CancellationToken::new();
                     task_token_ref.lock().unwrap().replace(task_token.clone());
                     let _ = tx.send(AppEvent::AppState(Listening));
+                    let _ = tx.send(AppEvent::Animate(Animation::Listening));
                 }
             }
         }
@@ -162,14 +167,14 @@ impl NetController {
             }
             metadata += &line;
         }
-
+        
         // ugh jank ugh
         drop(metadata_lines);
         drop(buffer);
 
         let mut file_info: FileInfo = serde_json::from_str(&metadata).unwrap();
         log!(tx, "Received file info. Name: {}, size: {}", file_info.name, Util::display_size(file_info.size));
-        
+
         tx.send(AppEvent::FileInfo(file_info.clone())).unwrap();
 
         let mut file_to_create = destination_path_buf.clone();
@@ -181,10 +186,11 @@ impl NetController {
             let res = stream
                 .write(b"NO, SIRE.\r\n")
                 .await;
-            
+
             if let Err(_) = res {
                 log!(tx, "Could not write to stream. This is HIGHLY unlikely at this point. :)");
                 tx.send(AppEvent::AppState(Idle)).unwrap();
+                let _ = tx.send(AppEvent::Animate(IdleAfterError));
                 return;
             }
 
@@ -226,12 +232,14 @@ impl NetController {
         let mut buffer = vec![0u8; 64 * 1024];
 
         tx.send(AppEvent::AppState(Accepting)).unwrap();
+        let _ = tx.send(AppEvent::Animate(Animation::Accepting));
         log!(tx, "File transfer starting...");
 
         loop {
             select! {
                 _ = shutdown_token.cancelled() => {
                     tx.send(AppEvent::AppState(Idle)).unwrap();
+                    let _ = tx.send(AppEvent::Animate(IdleAfterError));
                     log!(tx, "File download cancelled.");
                     // cleanup (I should be making invisible temp files but whatever)
                     drop(file_handle);
@@ -260,7 +268,7 @@ impl NetController {
                             tx.send(AppEvent::Progress(1.0 - (remaining_size as f32 / file_info.size as f32))).unwrap();
 
                             if remaining_size == 0 {
-                                log!(tx, "File transfer supposedly complete.");
+                                log!(tx, "File transfer complete.");
                             break;
                             }
                         }
@@ -288,11 +296,13 @@ impl NetController {
     ) {
         let _ = tx.send(AppEvent::AppState(Connecting));
         log!(tx, "Attempting to establish TCP connection to {}...", addr);
+        let _ = tx.send(AppEvent::Animate(Animation::Connecting));
 
         loop {
             select! {
                 _ = task_token.cancelled() => {
                     let _ = tx.send(AppEvent::AppState(Idle));
+                    let _ = tx.send(AppEvent::Animate(Animation::Idle));
                     log!(tx, "Connection aborted manually by user.");
                     break;
                 }
@@ -301,12 +311,13 @@ impl NetController {
                     match conn {
                         Ok(stream) => {
                             Self::handle_send_request(stream, tx.clone(), task_token.clone(), file_info).await;
-
+                            let _ = tx.send(AppEvent::Animate(IdleAfterSuccess));
                             let _ = tx.send(AppEvent::AppState(Idle));
                             break;
                         }
                         Err(e) => {
                             let _ = tx.send(AppEvent::AppState(Idle));
+                            let _ = tx.send(AppEvent::Animate(IdleAfterError));
                             log!(tx, "Connection closed with error: {}", e);
                             break;
                         }
@@ -323,6 +334,7 @@ impl NetController {
         file_info: FileInfo,
     ) {
         tx.send(AppEvent::AppState(Handshake)).unwrap();
+        let _ = tx.send(AppEvent::Animate(Animation::Handshake));
         let file_info_serialized = serde_json::to_string(&file_info).unwrap();
         stream.write(file_info_serialized.as_bytes()).await.unwrap();
         stream.write(b"\r\nITS OVER\r\n").await.unwrap();
@@ -335,24 +347,27 @@ impl NetController {
 
         match response_result {
             Ok(_) => {
-                log!(tx, "Received response: {}", response);
+                // log!(tx, "Received response: {}", response);
             }
             Err(_) => {
                 log!(tx, "Connection timeout elapsed! Aborting.");
                 tx.send(AppEvent::AppState(Idle)).unwrap();
+                let _ = tx.send(AppEvent::Animate(IdleAfterError));
                 return;
             }
         }
         
         match response.as_str() {
             "NO, SIRE." => {
-                log!(tx, "Remote EELFILE rejected the file for, as of now, vague reasons. Probably not enough space?");
+                log!(tx, "Remote EELFILE rejected the file for, as of now, vague reasons. Probably not enough space or file already exists.");
                 tx.send(AppEvent::AppState(Idle)).unwrap();
+                let _ = tx.send(AppEvent::Animate(IdleAfterError));
                 return;
             } 
             _ => {
                 log!(tx, "Affirmative remote response received! Attempting to start transfer.");
                 tx.send(AppEvent::AppState(Sending)).unwrap();
+                let _ = tx.send(AppEvent::Animate(Animation::Sending));
             }
         }
 
@@ -371,12 +386,14 @@ impl NetController {
                     if let Err(e) = read {
                         log!(tx, "Error reading file. Aborting connection. Error: {}", e);
                         tx.send(AppEvent::AppState(Idle)).unwrap();
+                        let _ = tx.send(AppEvent::Animate(IdleAfterError));
                         break;
                     }
 
                     let bytes = read.unwrap();
                     if bytes == 0 {
                         tx.send(AppEvent::AppState(Idle)).unwrap();
+                        let _ = tx.send(AppEvent::Animate(IdleAfterError));
                         log!(tx, "Funny EOF error. This should never happen (it always does when I write this.");
                     }
 
@@ -387,6 +404,7 @@ impl NetController {
 
                     if let Err(e) = write_result {
                         tx.send(AppEvent::AppState(Idle)).unwrap();
+                        let _ = tx.send(AppEvent::Animate(IdleAfterError));
                         log!(tx, "Connection to remote host closed unexpectedly. Aborting. Error: {}", e);
                         break;
                     }
