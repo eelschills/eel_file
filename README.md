@@ -20,6 +20,6 @@ Known issues:
 - file size won't display or log properly if the file is over 1TiB or larger
 - the free space check won't trigger correctly if you manually type the relative path to your file (but why would you)
 - animation transitions are sometimes borked and the status gif doesn't start at the start. Unfortunately without implementing my own animation system instead of using eframe's I'm not sure I can fix it
-- the app is impractical and useless (will not be fixed)
+- the app is impractical and useless (will not be fixed) (seriously it's just a practice project that I used to get familiar with Rust)
 
 \* Encryption support planned eventually soon™
