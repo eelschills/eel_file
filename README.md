@@ -10,8 +10,8 @@ DOWNLOAD EELFILE, WRITTEN 100% IN RUST
 
 Requirements:
 
-Windows (tested on 10 and 11)
-Forwarded ports if you want to receive files (you didn't think it'd be so easy?)
+* Windows (tested on 10 and 11)
+* Forwarded ports if you want to receive files (you didn't think it'd be so easy?)
 
 Bonus feature: random eel facts
 
